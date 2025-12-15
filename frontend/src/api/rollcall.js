@@ -2,22 +2,19 @@
 // 若您發布到伺服器，這裡要改成伺服器的網址
 const API_BASE = import.meta.env.VITE_API_URL || "https://www.citcnew.org.tw/churchstatshelper/api.php";
 
-/**
- * 抓取本地名單 (整合 local_members)
- */
 export async function fetchMembers(meeting, date) {
   // 對應 api.php?path=local-members
   const url = `${API_BASE}?path=local-members&district=永和&item_id=${meeting}&date=${date}`;
   const res = await fetch(url);
   const data = await res.json();
   
-  if (data.status !== "success") throw new Error(data.message || "載入失敗");
+  if (data.status !== "success") {
+    // 容錯：如果沒有 members 陣列，回傳空陣列
+    return [];
+  }
   return data.members || [];
 }
 
-/**
- * 送出點名 (整合 attendance_submit)
- */
 export async function submitAttendance({ district, meeting_type, member_ids, attend = 1, date }) {
   const formData = new FormData();
   formData.append("district", district);
@@ -34,17 +31,13 @@ export async function submitAttendance({ district, meeting_type, member_ids, att
   return res.json();
 }
 
-/**
- * 取得驗證碼圖片
- */
+// === 新增：中央系統登入相關 (對接 AttendanceService) ===
+
 export async function fetchCaptcha() {
   const res = await fetch(`${API_BASE}?path=central-verify`);
   return res.json();
 }
 
-/**
- * 執行中央登入
- */
 export async function loginCentral(picID, verifyCode) {
   const res = await fetch(`${API_BASE}?path=central-login`, {
     method: "POST",
@@ -54,9 +47,6 @@ export async function loginCentral(picID, verifyCode) {
   return res.json();
 }
 
-/**
- * 檢查登入狀態
- */
 export async function checkSession() {
   const res = await fetch(`${API_BASE}?path=central-session`);
   return res.json();
