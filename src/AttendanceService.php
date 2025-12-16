@@ -181,7 +181,7 @@ class AttendanceService {
     private function centralMembers() {
         
         // 1. 取得查詢參數，並設定預設值
-        $district = $_GET['district'] ?? '永和'; 
+        $district = $_GET['district'] ?? ''; 
         $search   = $_GET['search']   ?? '';
         error_log("District:".$district);
         error_log("search:".$search);
