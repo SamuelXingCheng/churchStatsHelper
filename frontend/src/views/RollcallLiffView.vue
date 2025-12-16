@@ -1,49 +1,47 @@
 <template>
-  <div class="min-h-screen bg-[#172952] flex flex-col font-sans text-gray-100 selection:bg-blue-500 selection:text-white pb-32">
+  <div class="min-h-screen bg-navy-base flex flex-col font-sans text-gray-200 selection:bg-accent-gold selection:text-navy-base pb-32">
     
-    <div v-if="!initLoading && isProfileComplete" class="sticky top-6 z-40 flex justify-center w-full">
-      <nav class="w-[92%] max-w-[380px] bg-[#112041]/95 backdrop-blur-xl border border-blue-400/20 shadow-2xl shadow-black/40 rounded-full px-5 py-3 flex justify-between items-center transition-all duration-300">
+    <div v-if="!initLoading && isProfileComplete" class="sticky top-6 z-40 flex justify-center w-full px-4">
+      <nav class="w-full max-w-[380px] bg-navy-base/80 backdrop-blur-md border border-white/10 shadow-xl shadow-black/20 rounded-2xl px-4 py-3 flex justify-between items-center transition-all duration-300">
         
         <div class="flex items-center space-x-3">
-          <div class="bg-gradient-to-b from-blue-500 to-blue-700 text-white font-bold rounded-full w-9 h-9 flex items-center justify-center text-sm shadow-lg border border-blue-300/30">
+          <div class="bg-gradient-to-br from-blue-600/80 to-navy-light text-white font-bold rounded-xl w-10 h-10 flex items-center justify-center text-sm shadow-inner border border-white/10">
             {{ userProfile.main_district ? userProfile.main_district[0] : '召' }}
           </div>
           <div class="leading-tight">
             <div class="font-bold text-sm text-gray-100 tracking-wide">點名助手</div>
-            <div class="text-[10px] text-blue-300 font-medium tracking-wider uppercase scale-90 origin-left">
+            <div class="text-[11px] text-gray-400 font-medium tracking-wider">
               {{ userProfile.line_display_name }}
             </div>
           </div>
         </div>
 
-        <div class="flex items-center space-x-1 bg-[#0b1426]/50 rounded-full p-1 border border-white/5">
+        <div class="flex items-center space-x-2">
           <button 
             @click="checkSession(true)" 
-            class="p-1.5 rounded-full text-gray-400 hover:bg-white/10 hover:text-white transition active:scale-90"
-            :class="{'animate-spin text-blue-400': syncing}"
-            title="同步中央資料"
+            class="p-2 rounded-full text-gray-400 hover:text-white hover:bg-white/5 transition active:scale-95"
+            :class="{'animate-spin text-accent-gold': syncing}"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
 
-          <button @click="openProfileEdit" class="relative group p-0.5">
+          <button @click="openProfileEdit" class="relative group">
+            <div class="absolute inset-0 rounded-full border border-accent-gold/30 scale-110 opacity-0 group-hover:opacity-100 transition"></div>
             <img 
               :src="userProfile.pictureUrl || 'https://via.placeholder.com/150'" 
-              class="h-7 w-7 rounded-full bg-gray-700 object-cover border border-white/20 group-hover:border-blue-400 transition" 
-              @error="$event.target.src = 'https://via.placeholder.com/150'"
+              class="h-8 w-8 rounded-full bg-gray-700 object-cover border border-white/10 shadow-lg" 
             />
           </button>
         </div>
       </nav>
     </div>
 
-    <main class="flex-grow w-full max-w-[380px] mx-auto px-2 mt-6">
-      
-      <div v-if="initLoading" class="flex flex-col items-center justify-center h-[60vh] text-blue-200/50">
-        <div class="animate-spin rounded-full h-10 w-10 border-[3px] border-blue-900 border-t-blue-400 mb-4"></div>
-        <p class="text-xs font-medium tracking-widest uppercase">Loading...</p>
+    <main class="flex-grow w-full max-w-[380px] mx-auto px-4 pt-10">
+      <div v-if="initLoading" class="flex flex-col items-center justify-center h-[60vh] text-gray-500">
+        <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-600 border-t-accent-gold mb-4"></div>
+        <p class="text-xs font-medium tracking-widest uppercase opacity-60">Loading...</p>
       </div>
 
       <RollcallProfileEdit 
@@ -75,9 +73,9 @@
       @close="showLoginModal = false"
     />
 
-    <div v-if="message" class="fixed top-28 left-1/2 -translate-x-1/2 bg-[#112041] border border-blue-500/50 text-white px-5 py-2.5 rounded-full shadow-2xl transition-all duration-300 z-[60] flex items-center space-x-3 min-w-[200px] justify-center backdrop-blur-md">
-      <span class="text-lg">🔔</span>
-      <span class="font-medium text-sm">{{ message }}</span>
+    <div v-if="message" class="fixed top-28 left-1/2 -translate-x-1/2 bg-navy-light/90 border border-white/10 text-gray-100 px-6 py-3 rounded-xl shadow-2xl transition-all duration-300 z-[60] flex items-center space-x-3 backdrop-blur-md">
+      <span class="text-accent-gold">●</span>
+      <span class="font-medium text-sm tracking-wide">{{ message }}</span>
     </div>
 
   </div>
