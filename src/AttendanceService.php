@@ -1,18 +1,18 @@
 <?php
-    // src/AttendanceService.php
+// src/AttendanceService.php
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/Database.php';      // 維持你原本的 DB 類別
+require_once __DIR__ . '/Database.php';
 require_once __DIR__ . '/CookieCleaner.php';
 require_once __DIR__ . '/CentralSyncService.php';
 
 class AttendanceService {
     private $conn;
     private $cookiePath;
-    // 定義統一的 User-Agent，確保所有請求被視為同一個瀏覽器 session
+    // 定義統一的 User-Agent
     private $userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
     public function __construct() {
-        if (!defined('CHURCHGROUP') || !defined('CENTRAL_USERNAME')) {
+        if (!defined('CHURCHGROUP') || !defined('CENTRAL_USERNAME') || !defined('CENTRAL_BASE_URL')) {
             error_log("[AttendanceService] Warning: Missing env configuration.");
         }
         $this->conn = Database::getInstance()->getConnection();
@@ -28,6 +28,7 @@ class AttendanceService {
     public function handleRequest($path) {
         try {
             switch ($path) {
+                // 中央系統相關
                 case "central-verify":
                     return $this->centralVerify();
                 case "central-login":
@@ -36,11 +37,18 @@ class AttendanceService {
                     return $this->centralSession();
                 case "central-members":
                     return $this->centralMembers();
+                case "central-attendance": // 相容舊路徑
+                case "attendance-submit":  // 統一 submit 入口
+                    return $this->attendanceSubmit(); 
+                
+                // 本地資料相關
                 case "local-members":
                     return $this->localMembers();
-                case "attendance-submit": // 統一 submit 入口
-                case "central-attendance":
-                    return $this->attendanceSubmit(); 
+
+                // 【新增路由】: 處理 Line 登入後的用戶資料和個人檔案
+                case "user-profile":
+                    return $this->handleUserProfile();
+                    
                 default:
                     throw new Exception("Unknown path: $path");
             }
@@ -53,24 +61,154 @@ class AttendanceService {
         }
     }
 
-    // 對應: central_verify.php
+    // ==========================================
+    //  User Profile & Line Login Logic (新增區塊)
+    // ==========================================
+
+    /**
+     * 處理 Line 登入與個人檔案更新的路由分發
+     */
+    private function handleUserProfile() {
+        $method = $_SERVER['REQUEST_METHOD'];
+        
+        // 嘗試從各種來源取得參數
+        $input = json_decode(file_get_contents("php://input"), true);
+        $lineUserId = $_GET['line_user_id'] ?? ($_POST['line_user_id'] ?? ($input['line_user_id'] ?? null));
+        $lineDisplayName = $_GET['line_display_name'] ?? ($_POST['line_display_name'] ?? ($input['line_display_name'] ?? null));
+        
+        if (!$lineUserId) {
+            throw new Exception("Line User ID 缺失，無法處理用戶資料");
+        }
+
+        switch ($method) {
+            case 'GET':
+                // 讀取個人檔案
+                return $this->fetchUserProfile($lineUserId);
+            case 'POST':
+                // 如果請求中包含 line_display_name，視為「登入自動記錄」
+                if ($lineDisplayName) {
+                    return $this->loginProfileUpdate($lineUserId, $lineDisplayName);
+                }
+                // 否則視為「表單送出更新」(只更新 district/email)
+                return $this->formProfileUpdate($lineUserId, $input);
+            default:
+                throw new Exception("不支援的 HTTP 方法");
+        }
+    }
+    
+    /**
+     * 【登入自動記錄】
+     * 處理 Line 登入成功時，自動將 Line ID 和暱稱寫入資料庫
+     */
+    private function loginProfileUpdate($lineUserId, $lineDisplayName) {
+        $sql = "INSERT INTO user_profiles 
+                (line_user_id, line_display_name, created_at, updated_at) 
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE 
+                line_display_name = VALUES(line_display_name), -- 每次登入都更新 Line 暱稱 (如果使用者改名)
+                updated_at = CURRENT_TIMESTAMP";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute([$lineUserId, $lineDisplayName]);
+        
+        // 回傳完整的用戶資料，供前端判斷是否跳轉去填寫大區
+        return $this->fetchUserProfile($lineUserId);
+    }
+
+    /**
+     * 【表單編輯更新】
+     * 處理使用者手動提交的大區、小區、Email 更新
+     */
+    private function formProfileUpdate($lineUserId, $input) {
+        $mainDistrict = $input['main_district'] ?? null;
+        $subDistrict  = $input['sub_district']  ?? null;
+        $email        = $input['email']         ?? null;
+
+        if (empty($mainDistrict) || empty($subDistrict)) {
+            throw new Exception("大區和小區為必填欄位");
+        }
+
+        // 僅更新非 Line 基礎資料
+        $sql = "UPDATE user_profiles SET 
+                main_district = ?, 
+                sub_district = ?, 
+                email = ?, 
+                updated_at = CURRENT_TIMESTAMP 
+                WHERE line_user_id = ?";
+        
+        $stmt = $this->conn->prepare($sql);
+        $success = $stmt->execute([$mainDistrict, $subDistrict, $email, $lineUserId]);
+
+        if (!$success) {
+            error_log("Database form update failed for Line ID: " . $lineUserId);
+            throw new Exception("個人檔案更新失敗，請檢查資料庫連線或權限。");
+        }
+
+        return ["status" => "success", "message" => "個人檔案更新成功"];
+    }
+
+    /**
+     * 獲取單一使用者檔案 (用於前端展示)
+     */
+    private function fetchUserProfile($lineUserId) {
+        $sql = "SELECT line_user_id, line_display_name, main_district, sub_district, email 
+                FROM user_profiles 
+                WHERE line_user_id = ?";
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute([$lineUserId]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$user) {
+            // 如果連 line_user_id 都找不到 (理論上 loginProfileUpdate 已經處理了，但以防萬一)
+            $user = [
+                'line_user_id' => $lineUserId,
+                'line_display_name' => '',
+                'main_district' => '',
+                'sub_district' => '',
+                'email' => '',
+            ];
+            $profileComplete = false;
+        } else {
+            // 檢查是否完成必填欄位 (大區和子區)
+            $profileComplete = !empty($user['main_district']) && !empty($user['sub_district']);
+        }
+
+        return [
+            "status" => "success",
+            "user" => $user,
+            "profileComplete" => $profileComplete, // 前端依此判斷是否跳轉到編輯頁面
+            "message" => $profileComplete ? "已完成個人檔案設定" : "請設定大區和小區"
+        ];
+    }
+
+    // ==========================================
+    //  Central System Logic (中央系統互動)
+    // ==========================================
+
+    // 對應: central_verify.php (使用 uniqid 增強版)
     private function centralVerify() {
+        // 1. 確保 Cookie 資料夾存在且可寫入
+        if (!is_writable($this->cookiePath)) {
+             @chmod($this->cookiePath, 0777);
+        }
+
         $cleaner = new CookieCleaner(3600);
         $cleaner->cleanPicCookies();
 
-        $picID = rand();
+        $picID = uniqid(); // 使用 uniqid 避免前端選擇器問題
         $cookieFile = $this->cookiePath . "/picCookie_" . $picID . ".tmp";
-        $loginUrl  = "https://www.chlife-stat.org/login.php";
-        $verifyUrl = "https://www.chlife-stat.org/lib/securimage/securimage_show.php";
+        
+        $loginUrl  = CENTRAL_BASE_URL . "/login.php";
+        $verifyUrl = CENTRAL_BASE_URL . "/lib/securimage/securimage_show.php";
 
         // Step 1: 建立 Session
         $ch = curl_init($loginUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
         curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        // 加入 User-Agent
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
-        curl_exec($ch);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        $loginContent = curl_exec($ch);
         curl_close($ch);
 
         // Step 2: 抓圖片
@@ -78,10 +216,15 @@ class AttendanceService {
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        // 加入 User-Agent (保持一致)
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         $imageData = curl_exec($ch);
+        $imgHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        if ($imgHttpCode != 200 || empty($imageData)) {
+            throw new Exception("無法下載驗證碼圖片 (HTTP $imgHttpCode)");
+        }
 
         // Step 3: 存圖
         $picPath = __DIR__ . "/../pic";
@@ -90,12 +233,10 @@ class AttendanceService {
         $fileName = "pic_" . $picID . ".jpg";
         file_put_contents($picPath . "/" . $fileName, $imageData);
 
-        $publicUrl = "./pic/" . $fileName; 
-
         return [
             "status"  => "success",
             "message" => "驗證碼圖片已存檔",
-            "url"     => $publicUrl,
+            "url"     => "./pic/" . $fileName,
             "picID"   => $picID
         ];
     }
@@ -112,15 +253,15 @@ class AttendanceService {
         if (!file_exists($cookieFile)) throw new Exception("找不到 cookie，請重新整理驗證碼");
 
         $postFields = [
-            "district"     => CHURCHGROUP,
-            "church_id"    => CHURCHID,
-            "account"      => CENTRAL_USERNAME,
-            "pwd"          => CENTRAL_PASSWORD,
-            "language"     => "zh-tw",
-            "captcha_code" => $verifyCode
+            "district"      => CHURCHGROUP,
+            "church_id"     => CHURCHID,
+            "account"       => CENTRAL_USERNAME,
+            "pwd"           => CENTRAL_PASSWORD,
+            "language"      => "zh-tw",
+            "captcha_code"  => $verifyCode
         ];
 
-        $ch = curl_init("https://www.chlife-stat.org/authenticate.php");
+        $ch = curl_init(CENTRAL_BASE_URL . "/authenticate.php");
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -128,10 +269,8 @@ class AttendanceService {
         curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile); 
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        
-        // 使用統一的 User-Agent
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
-        curl_setopt($ch, CURLOPT_REFERER, 'https://www.chlife-stat.org/login.php');
+        curl_setopt($ch, CURLOPT_REFERER, CENTRAL_BASE_URL . '/login.php');
 
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -139,10 +278,8 @@ class AttendanceService {
 
         if ($httpCode == 200 && strpos($response, "登入失敗") === false) {
             $centralCookieFile = $this->cookiePath . "/central_cookie.tmp";
-            
             if (file_exists($centralCookieFile)) @unlink($centralCookieFile);
             rename($cookieFile, $centralCookieFile);
-            
             return ["success" => true, "message" => "登入成功"];
         } else {
             return ["success" => false, "message" => "登入失敗，請檢查驗證碼"];
@@ -152,15 +289,12 @@ class AttendanceService {
     // 對應: central_session.php
     private function centralSession() {
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
-        
         if (!file_exists($cookieFile)) return ["loggedIn" => false, "message" => "未登入"];
 
-        $ch = curl_init("https://www.chlife-stat.org/index.php");
+        $ch = curl_init(CENTRAL_BASE_URL . "/index.php");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        
-        // 使用統一的 User-Agent
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         
@@ -168,7 +302,6 @@ class AttendanceService {
         $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
         curl_close($ch);
 
-        // 如果被轉址回 login.php，或是頁面含有登入框，代表 Session 失效
         if (strpos($effectiveUrl, 'login.php') !== false || strpos($response, "帳號/Account") !== false) {
             @unlink($cookieFile);
             return ["loggedIn" => false, "message" => "Session 已過期，請重新登入"];
@@ -179,76 +312,64 @@ class AttendanceService {
 
     // 對應: central_members.php
     private function centralMembers() {
-        
-        // 1. 取得查詢參數，並設定預設值
         $district = $_GET['district'] ?? ''; 
         $search   = $_GET['search']   ?? '';
-        error_log("District:".$district);
-        error_log("search:".$search);
 
-        // 2. 檢查 Cookie 檔案是否存在，用於維持登入狀態
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
             throw new Exception("Cookie 不存在，請先執行登入");
         }
     
-        // 3. 取得當前年份與週次
         $year = date("Y");
         $week = date("W");
     
-        // 4. 根據地區名稱 ($district) 取得對應的設定值 (configValue)
-        // 假設 DISTRICT_ID 是一個定義好的常數或全域變數，存儲地區到 ID 的映射
         $districtMap = (defined('DISTRICT_ID') ? DISTRICT_ID : []);
-        
-        // ★★★ 關鍵修正：取得完整的設定值 (例如 '7586,3') ★★★
         $configValue = $districtMap[$district] ?? ''; 
     
         if (empty($configValue)) {
             throw new Exception("找不到對應的大區 ID 設定");
         }
     
-        // 5. 建構用於抓取名單的 URL
-        $url = "https://www.chlife-stat.org/list_members.php"
-             . "?start=0&limit=2000&year=$year&week=$week" // 保持 limit=2000 以抓取完整名單
-             . "&sex=&member_status=&status=&role="        // 新增的參數
+        $url = CENTRAL_BASE_URL . "/list_members.php"
+             . "?start=0&limit=2000&year=$year&week=$week" 
+             . "&sex=&member_status=&status=&role="        
              . "&search_col=member_name&search=" . urlencode($search)
-             // 傳遞完整的編碼設定值，用於篩選大區/教會
              . "&churches%5B%5D=" . urlencode($configValue) 
-             . "&filter_mode=churchStructureTab&roll_call_list="; // 新增的參數
+             . "&filter_mode=churchStructureTab&roll_call_list="; 
     
-        // 6. 初始化 cURL 請求
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile); // 帶上登入 Cookie
+        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile); 
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
-        curl_setopt($ch, CURLOPT_REFERER, 'https://www.chlife-stat.org/');
+        curl_setopt($ch, CURLOPT_REFERER, CENTRAL_BASE_URL . '/');
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
-        // 7. 執行 cURL 請求並取得結果
         $result = curl_exec($ch);
         $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
         curl_close($ch);
     
-        // 8. 檢查是否因為 Session 失效被重導向到登入頁
         if (strpos($effectiveUrl, 'login.php') !== false) {
              @unlink($cookieFile);
              throw new Exception("Session 失效，請重新登入。");
         }
     
-        // 9. 解析 JSON 數據
+        // 安全解析 JSON
         $data = json_decode($result, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $preview = substr($result, 0, 500); 
+            error_log("[AttendanceService] Central API JSON Decode Error: " . $preview);
+            throw new Exception("中央系統回傳格式錯誤 (非 JSON)，可能是系統維護或權限問題。");
+        }
     
         if (!$data || !isset($data['members'])) {
             throw new Exception("中央回傳格式錯誤");
         }
     
-        // 10. 啟用同步功能，將名單寫入本地資料庫
-        // 假設 CentralSyncService 類別已經被引入
+        // 啟用同步功能 (將資料存入 members 表)
         $sync = new CentralSyncService();
         $sync->syncMembersAndAttendance($district, $data);
     
-        // 11. 返回抓取到的數據
         return $data;
     }
     
@@ -295,7 +416,6 @@ class AttendanceService {
 
         if (!$meetingType || empty($memberIds)) throw new Exception("缺少參數");
 
-        // 計算週次
         $dateObj = new DateTime($inputDate);
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
@@ -321,19 +441,16 @@ class AttendanceService {
              return ["status" => "pending", "message" => "已存本地，但中央未登入，無法同步"];
         }
 
-        // ★★★ 修正 3：使用 http_build_query 組裝 POST 資料，更安全標準 ★★★
         $postData = [
             'meeting' => $meetingType,
             'year'    => $year,
             'week'    => $week,
             'attend'  => $attend,
-            'member_ids' => $memberIds // cURL 會自動處理陣列變數 member_ids[]
+            'member_ids' => $memberIds
         ];
 
-        // 必須使用 http_build_query 來處理陣列結構，才能正確轉為 member_ids[]=1&member_ids[]=2
         $postString = http_build_query($postData);
-
-        $url = "https://www.chlife-stat.org/edit_member_activity.php";
+        $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
         
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -341,7 +458,6 @@ class AttendanceService {
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        // 使用統一的 User-Agent
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
         
         $response = curl_exec($ch);
@@ -353,7 +469,6 @@ class AttendanceService {
             $placeholders = implode(',', array_fill(0, count($memberIds), '?'));
             $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW() 
                           WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
-            // 參數合併：memberIds + meetingType + date
             $params = array_merge($memberIds, [$meetingType, $date]);
             $this->conn->prepare($updateSql)->execute($params);
 

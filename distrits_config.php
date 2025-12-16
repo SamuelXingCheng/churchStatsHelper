@@ -1,8 +1,6 @@
 //點名系統	
 	define('CHURCHGROUP', '5');		//台中區
 	define('CHURCHID', '68');
-	define('ACCOUNT', 'sschen');
-	define('PWD', 'peace2012');
 	define('go_home_MEETING', '38');		//家聚會
 	define('home_MEETING','2312');
 	define('smallGroup', '39');		//排聚會

@@ -51,3 +51,19 @@ export async function checkSession() {
   const res = await fetch(`${API_BASE}?path=central-session`);
   return res.json();
 }
+
+/**
+ * 同步或更新使用者資料
+ * @param {Object} payload 
+ * - 登入時: { line_user_id, line_display_name }
+ * - 更新時: { line_user_id, main_district, sub_district, email }
+ */
+export async function syncUserProfile(payload) {
+  // 注意：我們將資料放在 body 中 (JSON)，這樣可以安全傳輸中文，不會報錯
+  const res = await fetch(`${API_BASE}?path=user-profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  return res.json();
+}
