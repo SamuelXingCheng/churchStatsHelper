@@ -83,10 +83,7 @@ class CentralSyncService {
                 error_log("test3:");
                 error_log("targetDistrictId:".$targetDistrictId);
                 error_log("memberDistId:".$memberDistId);
-                // 嚴格過濾
-                // if ($targetDistrictId > 0 && $memberDistId !== $targetDistrictId) {
-                //     continue; 
-                // }
+
                 error_log("test4:");
                 $memberId = intval($m['member_id']);
                 $name     = $m['member_name'] ?? '';
