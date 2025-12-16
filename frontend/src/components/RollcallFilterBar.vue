@@ -1,32 +1,52 @@
 <template>
-  <div class="flex flex-col gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm">
-    <div class="flex items-center gap-2">
-      <label class="text-sm font-bold text-gray-600 w-12 text-right">日期</label>
-      <input
-        type="date"
-        class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-        :value="selectedDate"
-        @input="$emit('update:date', $event.target.value)"
-      />
+  <div class="mb-4">
+    <!-- 聚會項目 -->
+    <div class="flex flex-wrap gap-2 mb-2">
+      <button
+        v-for="(name, id) in MEETING_NAMES"
+        :key="id"
+        class="px-3 py-1 rounded-lg border"
+        :class="selectedMeeting === id ? 'bg-green-500 text-white' : 'bg-gray-100'"
+        @click="$emit('update:meeting', id)"
+      >
+        {{ name }}
+      </button>
     </div>
 
-    <div class="flex items-center gap-2">
-      <label class="text-sm font-bold text-gray-600 w-12 text-right">聚會</label>
-      <select
-        class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-        :value="selectedMeeting"
-        @change="$emit('update:meeting', $event.target.value)"
+    <!-- 日期 -->
+    <div class="flex gap-2">
+      <button
+        v-for="d in dates"
+        :key="d.id"
+        class="flex-1 px-3 py-1 rounded-lg border"
+        :class="selectedDate === d.id ? 'bg-blue-500 text-white' : 'bg-gray-100'"
+        @click="$emit('update:date', d.id)"
       >
-        <option v-for="(name, code) in MEETING_NAMES" :key="code" :value="code">
-          {{ name }}
-        </option>
-      </select>
+        {{ d.name }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { MEETING_NAMES } from "../config/rollcallmeetings.js"; // 注意路徑
-defineProps(["selectedMeeting", "selectedDate"]);
-defineEmits(["update:meeting", "update:date"]);
+import { MEETING_NAMES } from "../config/rollcallmeetings.js"
+
+// 產生日期 (YYYY-MM-DD)
+function getWeekDate(offset) {
+  const today = new Date()
+  today.setDate(today.getDate() + offset * 7) // 上週/下週
+  return today.toISOString().slice(0, 10)
+}
+
+const dates = [
+  { id: getWeekDate(-1), name: "上週" },
+  { id: getWeekDate(0), name: "本週" },
+  { id: getWeekDate(1), name: "下週" }
+]
+
+defineProps({
+  selectedMeeting: String,
+  selectedDate: String
+})
+defineEmits(["update:meeting", "update:date"])
 </script>

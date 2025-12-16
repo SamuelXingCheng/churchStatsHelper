@@ -1,7 +1,8 @@
 <script setup>
-import RollcallMainView from './views/RollcallMainView.vue'
+// import RollcallMainView from './views/RollcallMainView.vue'
+import RollcallLiffView from './views/RollcallLiffView.vue'
 </script>
 
 <template>
-  <RollcallMainView />
+  <RollcallLiffView />
 </template>
