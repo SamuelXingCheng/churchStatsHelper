@@ -1,28 +1,28 @@
 <template>
   <div>
-    <div class="flex flex-wrap gap-2 mb-3">
+    <div class="flex flex-wrap gap-2 mb-4">
       <button
         v-for="(name, id) in MEETING_NAMES"
         :key="id"
-        class="px-4 py-1.5 rounded-lg border text-xs font-bold tracking-wide transition-all"
+        class="px-5 py-2 rounded-xl border text-sm font-bold tracking-wide transition-all"
         :class="meetingType === id 
           ? 'bg-accent-blue/20 text-blue-200 border-accent-blue/50 shadow-[0_0_10px_rgba(91,124,153,0.2)]' 
-          : 'bg-navy-dark/50 text-gray-500 border-transparent hover:text-gray-300 hover:bg-navy-dark'"
+          : 'bg-navy-dark/50 text-gray-400 border-transparent hover:text-gray-200 hover:bg-navy-dark'"
         @click="$emit('update:meetingType', id)"
       >
         {{ name }}
       </button>
     </div>
 
-    <div class="flex bg-navy-dark/50 p-1 rounded-lg border border-white/5">
+    <div class="flex bg-navy-dark/50 p-1.5 rounded-xl border border-white/5">
       <button
         v-for="d in dates"
         :key="d.id"
-        class="flex-1 py-1.5 rounded-md text-xs transition-all relative"
+        class="flex-1 py-2.5 rounded-lg text-sm transition-all relative"
         :class="date === d.id ? 'text-white font-bold' : 'text-gray-500 hover:text-gray-400'"
         @click="$emit('update:date', d.id)"
       >
-        <div v-if="date === d.id" class="absolute inset-0 bg-navy-light rounded-md shadow-sm border border-white/10 z-0"></div>
+        <div v-if="date === d.id" class="absolute inset-0 bg-navy-light rounded-lg shadow-sm border border-white/10 z-0"></div>
         <span class="relative z-10">{{ d.name }}</span>
       </button>
     </div>
