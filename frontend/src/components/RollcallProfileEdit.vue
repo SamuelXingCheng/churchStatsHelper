@@ -86,7 +86,7 @@ async function handleSubmit() {
       line_user_id: props.lineUserId,
       ...form.value
     }
-    
+    console.log("準備傳送的資料:", payload);
     const res = await syncUserProfile(payload)
     
     if (res.status === 'success') {

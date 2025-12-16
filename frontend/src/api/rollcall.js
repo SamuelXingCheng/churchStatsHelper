@@ -52,18 +52,16 @@ export async function checkSession() {
   return res.json();
 }
 
-/**
- * 同步或更新使用者資料
- * @param {Object} payload 
- * - 登入時: { line_user_id, line_display_name }
- * - 更新時: { line_user_id, main_district, sub_district, email }
- */
 export async function syncUserProfile(payload) {
-  // 注意：我們將資料放在 body 中 (JSON)，這樣可以安全傳輸中文，不會報錯
+  // ✅ 正確寫法：資料 (payload) 必須放在 body 裡面
   const res = await fetch(`${API_BASE}?path=user-profile`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    headers: { 
+        "Content-Type": "application/json" 
+        // ❌ 絕對不能在這裡加像 "X-Data": JSON.stringify(payload) 這樣的東西
+        // ❌ 也不能有 Authorization: "中文"
+    },
+    body: JSON.stringify(payload) // ✅ 中文放在這裡是安全的
   });
   return res.json();
 }
