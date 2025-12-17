@@ -8,7 +8,6 @@ require_once __DIR__ . '/CentralSyncService.php';
 class AttendanceService {
     private $conn;
     private $cookiePath;
-    // 定義統一的 User-Agent
     private $userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
     public function __construct() {
@@ -22,42 +21,23 @@ class AttendanceService {
         }
     }
 
-    /**
-     * 路由分發器：根據 path 呼叫對應功能
-     */
     public function handleRequest($path) {
         try {
+            // error_log("[AttendanceService] Request Path: " . $path);
             switch ($path) {
-                // 中央系統相關
-                case "central-verify":
-                    return $this->centralVerify();
-                case "central-login":
-                    return $this->centralLogin();
-                case "central-session":
-                    return $this->centralSession();
-                case "central-members":
-                    return $this->centralMembers();
-                case "central-attendance": // 相容舊路徑
-                case "attendance-submit":  // 統一 submit 入口
-                    return $this->attendanceSubmit(); 
-                
-                // 本地資料相關
-                case "local-members":
-                    return $this->localMembers();
-
-                // 【新增路由】: 處理 Line 登入後的用戶資料和個人檔案
-                case "user-profile":
-                    return $this->handleUserProfile();
-                    
-                default:
-                    throw new Exception("Unknown path: $path");
+                case "central-verify":    return $this->centralVerify();
+                case "central-login":     return $this->centralLogin();
+                case "central-session":   return $this->centralSession();
+                case "central-members":   return $this->centralMembers();
+                case "central-attendance":
+                case "attendance-submit": return $this->attendanceSubmit(); 
+                case "local-members":     return $this->localMembers();
+                case "user-profile":      return $this->handleUserProfile();
+                default: throw new Exception("Unknown path: $path");
             }
         } catch (Exception $e) {
-            // 統一錯誤回傳格式
-            return [
-                "status" => "error",
-                "message" => $e->getMessage()
-            ];
+            error_log("[AttendanceService] Error: " . $e->getMessage());
+            return ["status" => "error", "message" => $e->getMessage()];
         }
     }
 
@@ -373,17 +353,48 @@ class AttendanceService {
         return $data;
     }
     
-    // 對應: local_members.php
+    // ==========================================
+    //  Local Members Logic (核心除錯區)
+    // ==========================================
     private function localMembers() {
         $itemId = $_GET['item_id'] ?? null;
+        $dateInput = $_GET['date'] ?? date("Y-m-d");
+
+        error_log("[LocalMembers] Start. item_id={$itemId}");
+
         if (!$itemId) throw new Exception("缺少 item_id");
 
-        $dateInput = $_GET['date'] ?? date("Y-m-d");
         $dateObj = new DateTime($dateInput);
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $sundayDate = $dateObj->format('Y-m-d');
+        
+        // ★★★ DEBUG 重點 1: 檢查設定檔讀取狀況 ★★★
+        if (defined('DISTRICT_ID')) {
+            $mapCount = is_array(DISTRICT_ID) ? count(DISTRICT_ID) : 0;
+            error_log("[LocalMembers] DISTRICT_ID is defined. Count: " . $mapCount);
+            // 如果數量是 0，代表 .env 讀取失敗或格式錯誤
+            if ($mapCount === 0) {
+                error_log("[LocalMembers] CRITICAL WARNING: DISTRICT_ID array is empty! Check your .env DISTRICT_MAPS.");
+            }
+        } else {
+            error_log("[LocalMembers] CRITICAL ERROR: DISTRICT_ID constant is NOT defined!");
+        }
 
+        // 建立 ID 轉 中文名 的對照表
+        $idToNameMap = [];
+        if (defined('DISTRICT_ID') && is_array(DISTRICT_ID)) {
+            foreach (DISTRICT_ID as $name => $val) {
+                // $val 格式為 "7586,3" => 取出 7586
+                $parts = explode(',', $val);
+                if (isset($parts[0])) {
+                    $trimID = trim($parts[0]);
+                    $idToNameMap[$trimID] = $name;
+                }
+            }
+        }
+
+        // SQL 查詢
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
                        r.status, r.item_id AS record_item
                 FROM members m
@@ -394,11 +405,33 @@ class AttendanceService {
         $stmt->execute([$sundayDate, $itemId]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $members = array_map(function ($row) use ($itemId) {
+        error_log("[LocalMembers] DB fetched rows: " . count($rows));
+
+        // 轉換資料
+        $firstLog = false;
+        $members = array_map(function ($row) use ($itemId, $idToNameMap, &$firstLog) {
+            
+            // ★ 將資料庫裡的 ID (7586) 轉回 中文 (永和)
+            $rId = $row["region_id"] ?? "";
+            $rName = $idToNameMap[$rId] ?? $rId; // 找不到就回傳 ID
+            
+            // ★★★ DEBUG 重點 2: 印出第一筆轉換結果 ★★★
+            if (!$firstLog) {
+                error_log("[LocalMembers] Mapping Check: ID [{$rId}] => Name [{$rName}]");
+                if ($rId == $rName) {
+                    error_log("[LocalMembers] MAPPING FAILED: ID was not converted to Name. Check DISTRICT_ID config.");
+                } else {
+                    error_log("[LocalMembers] MAPPING SUCCESS: ID converted to Name.");
+                    error_log("[LocalMembers] Name First Char: " . mb_substr($row["name"], 0, 3, "UTF-8"));
+                }
+                $firstLog = true;
+            }
+            
             return [
                 "member_id"   => intval($row["member_id"]),
                 "member_name" => $row["name"],
                 "sex"         => $row["gender"],
+                "small_group_name" => $rName, // 前端要的中文
                 "item_id"     => intval($row["record_item"] ?? $itemId),
                 "status"      => is_null($row["status"]) ? null : intval($row["status"]),
             ];

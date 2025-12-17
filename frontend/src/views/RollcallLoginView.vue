@@ -10,7 +10,7 @@
 
       <div class="mb-4 text-center">
         <div v-if="captchaLoading" class="text-sm text-gray-600">
-          ⏳ 正在取得中央系統驗證碼，請稍候...
+          正在取得中央系統驗證碼，請稍候...
         </div>
 
         <img v-else-if="captchaUrl"
@@ -42,7 +42,7 @@
       </form>
 
       <div v-if="loading" class="mt-3 text-center text-sm text-gray-600">
-        ⏳ 正在連線中央點名系統，請稍候...
+        正在連線中央點名系統，請稍候...
       </div>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <template>
   <div 
+    v-if="member"
     @click="$emit('toggle')"
     class="flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all duration-300 group relative overflow-hidden"
     :class="isSelected 
@@ -22,7 +23,7 @@
 
       <div>
         <div class="font-bold text-lg tracking-wide transition-colors" :class="isSelected ? 'text-white' : 'text-gray-200'">
-          {{ member.member_name }}
+          {{ member.member_name || '無姓名' }}
         </div>
         <div class="text-sm text-gray-500 mt-1 font-medium">
           {{ member.small_group_name || '未分組' }}
@@ -37,19 +38,15 @@
 </template>
 
 <script setup>
-import { computed } from "vue"
-
+// 4. 修正 Props 定義，統一接收 member 物件與 isSelected 狀態
 const props = defineProps({
-  name: String,
-  selected: Boolean,   // 前端點選的狀態
-  status: [Number, null] // 後端資料庫狀態 (1=已出席, null=未出席)
+  member: {
+    type: Object,
+    required: true,
+    default: () => ({ member_name: '', small_group_name: '', status: null })
+  },
+  isSelected: Boolean
 })
-defineEmits(["toggle"])
 
-const buttonClass = computed(() => {
-  if (props.selected || props.status === 1) {
-    return "bg-green-500 text-white"
-  }
-  return "bg-gray-200 text-gray-800"
-})
+defineEmits(["toggle"])
 </script>

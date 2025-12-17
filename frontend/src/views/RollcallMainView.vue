@@ -28,7 +28,7 @@
           class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
           :class="activeTab === 'district' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
         >
-          <span>🏠</span>
+          <!-- <span>🏠</span> -->
           <span>{{ userProfile.sub_district || '本區' }}</span>
         </button>
         <button 
@@ -36,7 +36,7 @@
           class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
           :class="activeTab === 'custom' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
         >
-          <span>⭐</span>
+          <!-- <span>⭐</span> -->
           <span>自訂名單</span>
         </button>
       </div>
@@ -70,7 +70,7 @@
         <p class="text-xs tracking-wider">暫無名單資料</p>
       </div>
 
-      <div v-else class="space-y-2">
+      <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <MemberCard 
           v-for="member in filteredMembers" 
           :key="member.member_id"
@@ -159,27 +159,56 @@ onMounted(loadMembers)
 
 // 篩選邏輯 (核心功能 3)
 const filteredMembers = computed(() => {
-  if (activeTab.value === 'district') {
-    // 篩選使用者的小區
-    const targetSub = props.userProfile.sub_district || ''
-    // 如果使用者沒設小區，顯示全部，否則進行篩選
-    // 注意：後端回傳的 member 資料結構必須包含 small_group_name 或類似欄位
-    // 這裡假設後端回傳 member.sub_district 或 member.group_name
-    // 如果後端還沒給這個欄位，暫時會顯示全部
-    if (!targetSub) return members.value
-    
-    // 這裡需要確認 member 物件裡的欄位名稱
-    // 假設是 member.small_group_name
-    return members.value.filter(m => {
-        // 模糊比對，避免 "三小組" vs "第三小組" 的問題
-        return (m.small_group_name || '').includes(targetSub) || 
-               targetSub.includes(m.small_group_name || 'impossible_string')
-    })
-  } else {
-    // 自訂名單 (暫時顯示空，或者您可以實作 LocalStorage 儲存自訂 ID)
-    return [] 
+  // 1. 原始資料檢查
+  console.log("[Debug] 收到 members 資料筆數:", members.value?.length);
+  
+  if (!Array.isArray(members.value)) {
+    console.warn("[Debug] members.value 不是陣列！");
+    return [];
   }
-})
+
+  if (activeTab.value === 'district') {
+    // 2. 獲取使用者的小區設定
+    const targetSub = props.userProfile.sub_district || '';
+    console.log("[Debug] 當前使用者小區設定 (targetSub):", `"${targetSub}"`);
+    
+    // 3. 基本有效性檢查
+    const validMembers = members.value.filter(m => m && (m.member_id || m.id));
+    console.log("[Debug] 有效成員數量 (排除 undefined):", validMembers.length);
+
+    if (!targetSub) {
+      console.log("[Debug] 使用者未設定小區，顯示所有成員");
+      return validMembers;
+    }
+    
+    // 4. 執行篩選比對
+    const result = validMembers.filter(m => {
+        // 這裡確保讀取到的欄位是 small_group_name (後端已轉為中文)
+        const groupName = String(m.small_group_name || '');
+        const target = String(targetSub);
+        
+        // 模糊比對邏輯
+        const isMatch = groupName.includes(target) || target.includes(groupName);
+        
+        // 如果想看每一筆的比對情況，可以取消下面這行註解
+        // console.log(`[Debug] 比對: "${groupName}" vs "${target}" -> ${isMatch}`);
+        
+        return isMatch;
+    });
+
+    console.log("[Debug] 最終篩選出的成員數量:", result.length);
+    if (result.length > 0) {
+      console.log("[Debug] 篩選出的第一筆樣本:", result[0]);
+    } else {
+      console.warn("[Debug] 篩選後名單為空！請檢查小區名稱是否完全匹配。");
+    }
+
+    return result;
+  } else {
+    console.log("[Debug] 當前 Tab 不是 district，顯示空名單");
+    return []; 
+  }
+});
 
 // 全選/取消 (核心功能 4)
 const isAllSelected = computed(() => {
