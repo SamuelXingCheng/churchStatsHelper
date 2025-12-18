@@ -22,7 +22,7 @@
 
       <div v-if="isNewRegular || member.last_week_status === 1" class="flex flex-wrap justify-center gap-1 mt-1">
          <span v-if="isNewRegular" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-           ✨新
+           新參加
          </span>
          <span v-if="member.last_week_status === 1" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
            上週有

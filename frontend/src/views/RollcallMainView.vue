@@ -95,7 +95,7 @@
         <div v-if="groupedMembers.regulars.length > 0" class="mb-6">
           <div class="flex items-center space-x-2 px-2 mb-3 text-blue-200/80">
             <span class="text-sm font-bold transition-all duration-300">
-              {{ useSundayBenchmark ? '📋 主日常客' : '📋 本會常客' }}
+              {{ useSundayBenchmark ? '主日常客' : '本會常客' }}
             </span>
             <div class="h-px flex-1 bg-gradient-to-r from-blue-500/30 to-transparent"></div>
             <span class="text-[10px] bg-blue-500/10 px-2 py-0.5 rounded text-blue-300">
@@ -116,7 +116,7 @@
 
         <div v-if="groupedMembers.others.length > 0">
           <div class="flex items-center space-x-2 px-2 mb-3 text-gray-400/80">
-            <span class="text-sm font-bold">🌱 關懷名單</span>
+            <span class="text-sm font-bold">關懷名單</span>
             <div class="h-px flex-1 bg-gradient-to-r from-gray-600/30 to-transparent"></div>
             <span class="text-[10px] bg-gray-700/30 px-2 py-0.5 rounded text-gray-400">
               {{ groupedMembers.others.length }}

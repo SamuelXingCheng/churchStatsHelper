@@ -10,14 +10,6 @@ class CentralSyncService {
         $this->conn = Database::getInstance()->getConnection();
     }
 
-    // 輔助：從年份與週次算出該週主日(週日)的日期
-    private function getSundayFromYearWeek($year, $week) {
-        $dt = new DateTime();
-        $dt->setISODate($year, $week); // 預設是該週週一
-        $dt->modify('+6 days');        // 推算到週日
-        return $dt->format('Y-m-d');
-    }
-
     private function calculateYearWeek($inputDate) {
         $ts       = strtotime($inputDate);
         $thursday = strtotime("thursday this week", $ts);
@@ -36,9 +28,10 @@ class CentralSyncService {
     }
 
     /**
-     * 主要修改：新增 $customYear 與 $customWeek 參數 (預設為 null)
+     * 同步成員與點名資料
+     * ★ 新增參數: $targetYear, $targetWeek (若有傳入，則以此為準)
      */
-    public function syncMembersAndAttendance($district, $data, $customYear = null, $customWeek = null) {
+    public function syncMembersAndAttendance($district, $data, $targetYear = null, $targetWeek = null) {
         if (!$data || !isset($data['members']) || !isset($data['meetingIds'])) {
             return;
         }
@@ -49,14 +42,18 @@ class CentralSyncService {
         $districtMap  = defined('DISTRICT_ID') ? DISTRICT_ID : [];
         $targetDistrictId = intval($districtMap[$district] ?? 0);
 
-        // 【核心修正】判斷是否為補歷史資料
-        if ($customYear && $customWeek) {
-            // 如果有指定年份週次，就用指定的
-            $year = $customYear;
-            $week = $customWeek;
-            $date = $this->getSundayFromYearWeek($year, $week);
+        // ★★★ 關鍵修正：判斷是否指定了日期 ★★★
+        if ($targetYear && $targetWeek) {
+            // 如果有指定，就計算該週的主日日期
+            $year = $targetYear;
+            $week = $targetWeek;
+            
+            $dt = new DateTime();
+            $dt->setISODate($year, $week); // 設定為該週 (預設週一)
+            $dt->modify('+6 days');        // 推算到週日
+            $date = $dt->format('Y-m-d');
         } else {
-            // 否則維持原樣，抓今天
+            // 沒指定才用今天 (fallback)
             $today = date("Y-m-d");
             $date  = $this->getSundayOfWeek($today);
             [$year, $week] = $this->calculateYearWeek($today);
@@ -79,13 +76,6 @@ class CentralSyncService {
                 $groupId      = isset($pathParts[1]) ? intval($pathParts[1]) : null;
                 $regionId     = isset($pathParts[2]) ? intval($pathParts[2]) : null;
 
-                // 解析小區名稱
-                $pathNameParts = isset($m['path_name']) ? explode(',', $m['path_name']) : [];
-                $smallGroupName = $pathNameParts[2] ?? null; 
-                if (empty($smallGroupName) && $regionId) {
-                    $smallGroupName = "小組-" . $regionId;
-                }
-
                 $memberId = intval($m['member_id']);
                 $name     = $m['member_name'] ?? '';
                 $name     = preg_replace('/\s+/', ' ', strip_tags(str_ireplace(['<br/>', '<br>', '<BR/>', '<BR>'], ' ', $name)));
@@ -93,21 +83,22 @@ class CentralSyncService {
 
                 // Sync members
                 $sql = "INSERT INTO members 
-                            (member_id, name, gender, district_id, group_id, small_group_name, region_id, category, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            (member_id, name, gender, district_id, group_id, region_id, category, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                         ON DUPLICATE KEY UPDATE
-                            name=VALUES(name), gender=VALUES(gender), 
-                            district_id=VALUES(district_id), group_id=VALUES(group_id),
-                            small_group_name=VALUES(small_group_name), region_id=VALUES(region_id), 
-                            category=VALUES(category), updated_at=NOW()";
+                            name=VALUES(name), gender=VALUES(gender), district_id=VALUES(district_id),
+                            group_id=VALUES(group_id), region_id=VALUES(region_id), category=VALUES(category),
+                            updated_at=NOW()";
                 
                 $this->conn->prepare($sql)->execute([
-                    $memberId, $name, $gender, $memberDistId, $groupId, $smallGroupName, $regionId, $m['category'] ?? null
+                    $memberId, $name, $gender, $memberDistId, $groupId, $regionId, $m['category'] ?? null
                 ]);
 
                 // Sync attendance
                 foreach ($meetingIds as $idx => $meetingId) {
                     $status = $m["attend{$idx}"] ?? null;
+                    
+                    // ★ 這裡會使用正確計算出來的 $date, $year, $week 寫入資料庫
                     $sql = "INSERT INTO attendance_records 
                                 (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
@@ -119,7 +110,6 @@ class CentralSyncService {
             }
         
         } catch (\PDOException $e) {
-            error_log("[CentralSyncService] DB Error: " . $e->getMessage());
             throw new \Exception("資料庫寫入失敗: " . $e->getMessage());
         }
     }

@@ -96,47 +96,61 @@ class AttendanceService {
     }
 
     private function formProfileUpdate($lineUserId, $input) {
-        $mainDistrict = $input['main_district'] ?? null;
-        $subDistrict  = $input['sub_district']  ?? null;
-        $email        = $input['email']         ?? null;
+        $mainDistrict = trim($input['main_district'] ?? '');
+        $subDistrict  = trim($input['sub_district'] ?? '');
+        $email        = trim($input['email'] ?? '');
+        $monitored    = trim($input['monitored_districts'] ?? '');
 
         if (empty($mainDistrict) || empty($subDistrict)) {
             throw new Exception("大區和小區為必填欄位");
         }
 
-        // 1. 更新 user_profiles (原有的程式碼)
+        // 1. 先抓取舊設定
+        $sqlOld = "SELECT sub_district FROM user_profiles WHERE line_user_id = ?";
+        $stmtOld = $this->conn->prepare($sqlOld);
+        $stmtOld->execute([$lineUserId]);
+        $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
+
+        // 2. 更新資料庫
         $sql = "UPDATE user_profiles SET 
                 main_district = ?, 
                 sub_district = ?, 
                 email = ?, 
+                monitored_districts = ?,
                 updated_at = CURRENT_TIMESTAMP 
                 WHERE line_user_id = ?";
         
         $stmt = $this->conn->prepare($sql);
-        $success = $stmt->execute([$mainDistrict, $subDistrict, $email, $lineUserId]);
+        $success = $stmt->execute([$mainDistrict, $subDistrict, $email, $monitored, $lineUserId]);
 
-        if (!$success) {
-            error_log("Database form update failed for Line ID: " . $lineUserId);
-            throw new Exception("個人檔案更新失敗，請檢查資料庫連線或權限。");
+        if (!$success) throw new Exception("個人檔案更新失敗");
+
+        // 3. 【智慧判斷】是否需要同步
+        $oldSub = isset($old['sub_district']) ? trim($old['sub_district']) : '';
+        $isSubDistrictChanged = ($oldSub !== $subDistrict);
+        $runSync = false;
+
+        if ($isSubDistrictChanged) {
+            // 只要改了小區，我們就預設執行一次深度同步 (補 4 週)
+            // 因為現在參數改為精準的 "7586,3"，我們不能確定舊資料是否包含這些人
+            // 所以這裡拿掉 checkRegionDataExists 的阻擋，確保第一次切換時能抓到正確名單
+            $this->syncSmallDistrictData($subDistrict);
+            $runSync = true;
         }
 
-        // 2. 【新增】觸發自動同步
-        // 當使用者選定了小區，我們就順便把那個小區的名單抓下來
-        // 這樣本地資料庫就會有資料了，之後選名字才選得到
-        
-        // 為了不讓使用者等待同步過程 (可能會花幾秒)，
-        // 您可以選擇忽略同步結果，或者在前端顯示「同步中」
-        // 這裡我們同步執行：
-        $this->syncSmallDistrictData($subDistrict);
-
-        return ["status" => "success", "message" => "個人檔案更新成功，並已嘗試同步小區名單"];
+        return [
+            "status" => "success", 
+            "message" => $runSync ? "小區名單已更新" : "設定已儲存",
+            "synced" => $runSync
+        ];
     }
 
     /**
-     * 獲取單一使用者檔案 (用於前端展示)
+     * 獲取單一使用者檔案 (增加 monitored_districts 欄位)
      */
     private function fetchUserProfile($lineUserId) {
-        $sql = "SELECT line_user_id, line_display_name, main_district, sub_district, email 
+        // 請確保您的資料表 user_profiles 已新增 monitored_districts 欄位 (TEXT 類型)
+        $sql = "SELECT line_user_id, line_display_name, main_district, sub_district, email, monitored_districts 
                 FROM user_profiles 
                 WHERE line_user_id = ?";
         $stmt = $this->conn->prepare($sql);
@@ -157,12 +171,10 @@ class AttendanceService {
             // 檢查是否完成必填欄位 (大區和子區)
             $profileComplete = !empty($user['main_district']) && !empty($user['sub_district']);
         }
-
         return [
             "status" => "success",
-            "user" => $user,
-            "profileComplete" => $profileComplete, // 前端依此判斷是否跳轉到編輯頁面
-            "message" => $profileComplete ? "已完成個人檔案設定" : "請設定大區和小區"
+            "user" => $user ?: [ 'line_user_id' => $lineUserId, 'main_district' => '', 'sub_district' => '', 'email' => '', 'monitored_districts' => '' ],
+            "profileComplete" => !empty($user['main_district']) && !empty($user['sub_district'])
         ];
     }
 
@@ -170,79 +182,64 @@ class AttendanceService {
     //  Central System Logic (中央系統互動)
     // ==========================================
 
-    /**
-     * 【核心功能】同步指定「小區」的資料
-     * 輸入: $subDistrictName (例如 "建成", "永和")
-     * 此功能由 formProfileUpdate 自動觸發
-     */
     private function syncSmallDistrictData($subDistrictName) {
-        // 1. 取得小區 ID 設定
-        // 注意：這裡假設 DISTRICT_ID 是所有小區的總表 (key=小區名, value=ID)
         $districtMap = (defined('DISTRICT_ID') ? DISTRICT_ID : []);
-        $configValue = $districtMap[$subDistrictName] ?? '';
-
-        if (empty($configValue)) {
-            // 如果找不到這個小區的 ID，就無法同步
-            error_log("[AutoSync] 找不到小區 ID 設定: $subDistrictName (請確認 config.php 的 DISTRICT_ID)");
-            return false;
-        }
-
-        // 2. 檢查 Cookie (確認是否已登入中央)
-        $cookieFile = $this->cookiePath . "/central_cookie.tmp";
-        if (!file_exists($cookieFile)) {
-            error_log("[AutoSync] 中央系統未登入 (Cookie 不存在)，無法自動同步小區: $subDistrictName");
-            // 未來可在這裡加入自動登入 (Auto Login) 的邏輯
-            return false;
-        }
-
-        // 3. 準備參數抓取資料
-        $year = date("Y");
-        $week = date("W");
+        $churchIdStr = $districtMap[$subDistrictName] ?? '';
         
-        // 組裝 URL：注意這裡 churches[] 放的是小區的 ID
-        $url = CENTRAL_BASE_URL . "/list_members.php"
-             . "?start=0&limit=2000&year=$year&week=$week" 
-             . "&sex=&member_status=&status=&role="        
-             . "&search_col=member_name&search=" // 空白代表抓全部
-             . "&churches%5B%5D=" . urlencode($configValue) 
-             . "&filter_mode=churchStructureTab&roll_call_list="; 
-
-        // 4. 發送 CURL 請求
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile); 
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-
-        $result = curl_exec($ch);
-        $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
-        curl_close($ch);
-
-        // 5. 驗證結果
-        if (strpos($effectiveUrl, 'login.php') !== false) {
-             @unlink($cookieFile);
-             error_log("[AutoSync] Session 失效，請重新登入中央系統");
-             return false;
-        }
-
-        $data = json_decode($result, true);
-        if (!$data || !isset($data['members'])) {
-             error_log("[AutoSync] 中央回傳格式錯誤或該小區無資料");
-             return false;
-        }
-
-        // 6. 執行資料庫寫入 (呼叫 CentralSyncService)
-        try {
-            $sync = new CentralSyncService();
-            // 這裡傳入 $subDistrictName，讓 SyncService 知道是哪個區
-            $sync->syncMembersAndAttendance($subDistrictName, $data);
-            error_log("[AutoSync] 成功同步小區: $subDistrictName (ID: $configValue)");
-            return true;
-        } catch (Exception $e) {
-            error_log("[AutoSync] 資料庫寫入失敗: " . $e->getMessage());
+        if (empty($churchIdStr)) {
+            error_log("[AutoSync] 找不到小區 ID: $subDistrictName");
             return false;
         }
+
+        $churchIdParam = trim($churchIdStr); // 使用完整參數 "7586,3"
+
+        $cookieFile = $this->cookiePath . "/central_cookie.tmp";
+        if (!file_exists($cookieFile)) return false;
+
+        $syncService = new CentralSyncService();
+
+        // 準備：本週 + 過去 3 週
+        $weeks = [];
+        for ($i = 0; $i < 4; $i++) {
+            $d = new DateTime();
+            $d->modify("-$i week");
+            $weeks[] = [
+                'year' => (int)$d->format("o"),
+                'week' => (int)$d->format("W")
+            ];
+        }
+
+        foreach ($weeks as $w) {
+            $year = $w['year'];
+            $week = sprintf("%02d", $w['week']);
+
+            // URL 保持不變 (roll_call_list 為空以抓取所有項目)
+            $url = CENTRAL_BASE_URL . "/list_members.php"
+                 . "?start=0&limit=1000&year=$year&week=$week" 
+                 . "&churches%5B%5D=" . urlencode($churchIdParam) 
+                 . "&filter_mode=churchStructureTab"
+                 . "&roll_call_list="; 
+
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            $result = curl_exec($ch);
+            curl_close($ch);
+
+            $data = json_decode($result, true);
+            
+            // ★★★ 關鍵修改在這裡 ★★★
+            if ($data && isset($data['members'])) {
+                // 務必傳入 $year 和 $week，否則 CentralSyncService 會全部當成「本週」存入
+                $syncService->syncMembersAndAttendance($subDistrictName, $data, $year, $week);
+            }
+            
+            usleep(200000); 
+        }
+        return true;
     }
 
     // 對應: central_verify.php (使用 uniqid 增強版)

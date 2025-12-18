@@ -9,19 +9,24 @@ export default {
       colors: {
         // 定義您的品牌色
         navy: {
-          base: '#112041',  // 您指定的 R17 G32 B65
-          light: '#1c2e52', // 稍微亮一點，用於卡片背景
-          dark: '#0b1426',  // 深色，用於對比或陰影
+          // 修改前: '#112041' -> 修改後: 更深的午夜藍
+          base: '#0a1329',  
+          
+          // 修改前: '#1c2e52' -> 修改後: 用於卡片背景，深沉但與底色有區隔
+          light: '#14203b', 
+          
+          // 修改前: '#0b1426' -> 修改後: 用於陰影或邊框
+          dark: '#040812',  
         },
-        // 質感點綴色 (霧金/灰藍)
+        // 質感點綴色 (維持不變)
         accent: {
-          gold: '#C5A572',  // 穩重的金色
-          blue: '#5B7C99',  // 莫蘭迪藍
-          success: '#4ADE80', // 稍微柔和的綠色
+          gold: '#C5A572',  
+          blue: '#5B7C99',  
+          success: '#4ADE80', 
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'], // 建議引入 Inter 字體會更有質感
+        sans: ['Inter', 'system-ui', 'sans-serif'], 
       }
     },
   },
