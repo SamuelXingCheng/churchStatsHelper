@@ -2,7 +2,7 @@
   <div class="min-h-screen bg-navy-base flex flex-col font-sans text-gray-200 selection:bg-accent-gold selection:text-navy-base pb-32">
     
     <div v-if="!initLoading && isProfileComplete" class="sticky top-6 z-40 flex justify-center w-full px-4">
-      <nav class="w-full max-w-[500px] bg-navy-base/80 backdrop-blur-md border border-white/10 shadow-xl shadow-black/20 rounded-2xl px-5 py-4 flex justify-between items-center transition-all duration-300">
+      <nav class="w-full max-w-[600px] bg-navy-base/80 backdrop-blur-md border border-white/10 shadow-xl shadow-black/20 rounded-2xl px-5 py-4 flex justify-between items-center transition-all duration-300">
         
         <div class="flex items-center space-x-4">
           <div class="bg-gradient-to-br from-blue-600/80 to-navy-light text-white font-bold rounded-xl w-11 h-11 flex items-center justify-center text-base shadow-inner border border-white/10">
@@ -38,7 +38,7 @@
       </nav>
     </div>
 
-    <main class="flex-grow w-full max-w-[500px] mx-auto px-4 pt-10">
+    <main class="flex-grow w-full max-w-[600px] mx-auto px-4 pt-10">
       
       <div v-if="initLoading" class="flex flex-col items-center justify-center h-[60vh] text-gray-500">
         <div class="animate-spin rounded-full h-9 w-9 border-2 border-gray-600 border-t-accent-gold mb-4"></div>

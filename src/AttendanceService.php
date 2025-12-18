@@ -95,10 +95,6 @@ class AttendanceService {
         return $this->fetchUserProfile($lineUserId);
     }
 
-    /**
-     * 【表單編輯更新】
-     * 處理使用者手動提交的大區、小區、Email 更新
-     */
     private function formProfileUpdate($lineUserId, $input) {
         $mainDistrict = $input['main_district'] ?? null;
         $subDistrict  = $input['sub_district']  ?? null;
@@ -108,7 +104,7 @@ class AttendanceService {
             throw new Exception("大區和小區為必填欄位");
         }
 
-        // 僅更新非 Line 基礎資料
+        // 1. 更新 user_profiles (原有的程式碼)
         $sql = "UPDATE user_profiles SET 
                 main_district = ?, 
                 sub_district = ?, 
@@ -124,7 +120,16 @@ class AttendanceService {
             throw new Exception("個人檔案更新失敗，請檢查資料庫連線或權限。");
         }
 
-        return ["status" => "success", "message" => "個人檔案更新成功"];
+        // 2. 【新增】觸發自動同步
+        // 當使用者選定了小區，我們就順便把那個小區的名單抓下來
+        // 這樣本地資料庫就會有資料了，之後選名字才選得到
+        
+        // 為了不讓使用者等待同步過程 (可能會花幾秒)，
+        // 您可以選擇忽略同步結果，或者在前端顯示「同步中」
+        // 這裡我們同步執行：
+        $this->syncSmallDistrictData($subDistrict);
+
+        return ["status" => "success", "message" => "個人檔案更新成功，並已嘗試同步小區名單"];
     }
 
     /**
@@ -164,6 +169,81 @@ class AttendanceService {
     // ==========================================
     //  Central System Logic (中央系統互動)
     // ==========================================
+
+    /**
+     * 【核心功能】同步指定「小區」的資料
+     * 輸入: $subDistrictName (例如 "建成", "永和")
+     * 此功能由 formProfileUpdate 自動觸發
+     */
+    private function syncSmallDistrictData($subDistrictName) {
+        // 1. 取得小區 ID 設定
+        // 注意：這裡假設 DISTRICT_ID 是所有小區的總表 (key=小區名, value=ID)
+        $districtMap = (defined('DISTRICT_ID') ? DISTRICT_ID : []);
+        $configValue = $districtMap[$subDistrictName] ?? '';
+
+        if (empty($configValue)) {
+            // 如果找不到這個小區的 ID，就無法同步
+            error_log("[AutoSync] 找不到小區 ID 設定: $subDistrictName (請確認 config.php 的 DISTRICT_ID)");
+            return false;
+        }
+
+        // 2. 檢查 Cookie (確認是否已登入中央)
+        $cookieFile = $this->cookiePath . "/central_cookie.tmp";
+        if (!file_exists($cookieFile)) {
+            error_log("[AutoSync] 中央系統未登入 (Cookie 不存在)，無法自動同步小區: $subDistrictName");
+            // 未來可在這裡加入自動登入 (Auto Login) 的邏輯
+            return false;
+        }
+
+        // 3. 準備參數抓取資料
+        $year = date("Y");
+        $week = date("W");
+        
+        // 組裝 URL：注意這裡 churches[] 放的是小區的 ID
+        $url = CENTRAL_BASE_URL . "/list_members.php"
+             . "?start=0&limit=2000&year=$year&week=$week" 
+             . "&sex=&member_status=&status=&role="        
+             . "&search_col=member_name&search=" // 空白代表抓全部
+             . "&churches%5B%5D=" . urlencode($configValue) 
+             . "&filter_mode=churchStructureTab&roll_call_list="; 
+
+        // 4. 發送 CURL 請求
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile); 
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+
+        $result = curl_exec($ch);
+        $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+        curl_close($ch);
+
+        // 5. 驗證結果
+        if (strpos($effectiveUrl, 'login.php') !== false) {
+             @unlink($cookieFile);
+             error_log("[AutoSync] Session 失效，請重新登入中央系統");
+             return false;
+        }
+
+        $data = json_decode($result, true);
+        if (!$data || !isset($data['members'])) {
+             error_log("[AutoSync] 中央回傳格式錯誤或該小區無資料");
+             return false;
+        }
+
+        // 6. 執行資料庫寫入 (呼叫 CentralSyncService)
+        try {
+            $sync = new CentralSyncService();
+            // 這裡傳入 $subDistrictName，讓 SyncService 知道是哪個區
+            $sync->syncMembersAndAttendance($subDistrictName, $data);
+            error_log("[AutoSync] 成功同步小區: $subDistrictName (ID: $configValue)");
+            return true;
+        } catch (Exception $e) {
+            error_log("[AutoSync] 資料庫寫入失敗: " . $e->getMessage());
+            return false;
+        }
+    }
 
     // 對應: central_verify.php (使用 uniqid 增強版)
     private function centralVerify() {
