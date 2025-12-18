@@ -537,8 +537,16 @@ class AttendanceService {
     private function attendanceSubmit() {
         $meetingType = $_POST['meeting_type'] ?? null;
         $memberIds   = $_POST['member_ids'] ?? [];
-        $attend      = $_POST['attend'] ?? 1;
-        $inputDate   = $_POST['date'] ?? date("Y-m-d");
+        $attend      = $_POST['attend'] ?? 1;          // ★ 補回這行
+        $inputDate   = $_POST['date'] ?? date("Y-m-d"); // ★ 補回這行
+
+        // 2. 處理 member_ids 格式 (修復 array_merge 錯誤)
+        if (is_string($memberIds)) {
+            // 如果是字串 "123,456"，就轉成陣列 [123, 456]
+            $memberIds = array_filter(explode(',', $memberIds));
+        }
+        // 確保是純數字陣列，避免 SQL 注入
+        $memberIds = array_map('intval', (array)$memberIds);
 
         if (!$meetingType || empty($memberIds)) throw new Exception("缺少參數");
 
