@@ -9,9 +9,9 @@
   >
     <div v-if="isSelected" class="absolute inset-0 bg-accent-gold/5 z-0"></div>
 
-    <div class="flex items-center space-x-5 z-10">
+    <div class="flex items-center space-x-4 z-10 w-full">
       <div 
-        class="w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-300"
+        class="flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-300"
         :class="isSelected 
           ? 'bg-accent-gold border-accent-gold scale-100' 
           : 'border-gray-600 bg-transparent group-hover:border-gray-400'"
@@ -21,24 +21,38 @@
         </svg>
       </div>
 
-      <div>
-        <div class="font-bold text-lg tracking-wide transition-colors" :class="isSelected ? 'text-white' : 'text-gray-200'">
-          {{ member.member_name || '無姓名' }}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center flex-wrap gap-2">
+          <div class="font-bold text-lg tracking-wide transition-colors truncate" :class="isSelected ? 'text-white' : 'text-gray-200'">
+            {{ member.member_name || '無姓名' }}
+          </div>
+
+          <div class="flex items-center space-x-1">
+             <span v-if="isNewRegular" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 whitespace-nowrap">
+               ✨ 新常客
+             </span>
+
+             <span v-if="member.last_week_status === 1" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 whitespace-nowrap">
+               上週 V
+             </span>
+          </div>
         </div>
-        <div class="text-sm text-gray-500 mt-1 font-medium">
+        
+        <div class="text-sm text-gray-500 mt-0.5 font-medium truncate">
           {{ member.small_group_name || '未分組' }}
         </div>
       </div>
     </div>
 
-    <div v-if="member.status === 1" class="z-10 px-2.5 py-1 rounded text-xs font-bold bg-green-900/30 text-green-500/80 border border-green-500/10">
+    <div v-if="member.status === 1" class="z-10 px-2.5 py-1 rounded text-xs font-bold bg-green-900/30 text-green-500/80 border border-green-500/10 whitespace-nowrap ml-2">
       已點
     </div>
   </div>
 </template>
 
 <script setup>
-// 4. 修正 Props 定義，統一接收 member 物件與 isSelected 狀態
+import { computed } from 'vue'
+
 const props = defineProps({
   member: {
     type: Object,
@@ -49,4 +63,10 @@ const props = defineProps({
 })
 
 defineEmits(["toggle"])
+
+// 計算是否為「新常客」
+// 定義：上週有來 (last_week_status === 1) 但 活躍度低 (monthly_count < 2)
+const isNewRegular = computed(() => {
+    return props.member.last_week_status === 1 && (props.member.monthly_count || 0) < 2
+})
 </script>

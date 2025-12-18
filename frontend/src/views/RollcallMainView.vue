@@ -177,40 +177,31 @@ const props = defineProps({
 const emit = defineEmits(['openLogin'])
 
 // 狀態
-const meetingType = ref('38') 
+const meetingType = ref('37') 
 const date = ref(new Date().toISOString().split('T')[0])
 const activeTab = ref('district') 
 const members = ref([])
 const selectedIds = ref([])
 const loadingMembers = ref(false)
 const submitting = ref(false)
-
-// 新增狀態：是否以主日為基準
 const useSundayBenchmark = ref(false) 
 
-// 載入名單
 async function loadMembers() {
   loadingMembers.value = true
   try {
-    // 根據開關決定傳送給後端的模式
     const benchmarkMode = useSundayBenchmark.value ? 'sunday' : 'self'
-    
-    // 呼叫 API (需確認 api/rollcall.js 已支援第三個參數)
     const res = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     members.value = res || []
     
-    // 自動勾選邏輯：檢查當週紀錄
-    // 注意：這裡只會看「當前 meetingType」有沒有點過，與 benchmarkMode 無關
+    // 智慧預選：若本週尚未有點名紀錄 (status 為 null 或 0)，則自動勾選「上週有來」的人
+    // 若 status === 1，代表資料庫已有紀錄，就只顯示已紀錄的
     const hasCurrentRecords = members.value.some(m => m.status === 1 || m.status === 0)
 
     if (hasCurrentRecords) {
-      // 情況 A：資料庫已有本週紀錄 -> 顯示資料庫的結果
       selectedIds.value = members.value
         .filter(m => m.status === 1)
         .map(m => m.member_id)
     } else {
-      // 情況 B：本週全新 -> 啟動「智慧預選」
-      // 預選規則：上週有來過「這個聚會」的人 (last_week_status 永遠是指當前 meetingType)
       selectedIds.value = members.value
         .filter(m => m.last_week_status === 1)
         .map(m => m.member_id)
@@ -224,22 +215,19 @@ async function loadMembers() {
   }
 }
 
-// 切換基準的函式
 function toggleBenchmark() {
   useSundayBenchmark.value = !useSundayBenchmark.value
-  loadMembers() // 重新載入以更新排序
+  loadMembers() 
 }
 
-// 監聽變化
 watch([meetingType, date], () => {
-  // 當切換聚會或日期時，預設重置回「看自己」，避免使用者混淆 (可依需求移除此行)
   useSundayBenchmark.value = false 
   loadMembers()
 })
 
 onMounted(loadMembers)
 
-// 1. 基礎篩選 (小區/關鍵字)
+// 1. 基礎篩選
 const filteredMembers = computed(() => {
   if (!Array.isArray(members.value)) return [];
 
@@ -265,10 +253,10 @@ const groupedMembers = computed(() => {
   const others = []
   
   filteredMembers.value.forEach(m => {
-    // 判斷標準：
-    // 1. 上週有來這個聚會 (last_week_status === 1)
-    // 2. 近一個月活躍度高 (monthly_count >= 2) -> 這裡的 monthly_count 已經根據 benchmarkMode 變過身了
-    if (m.last_week_status === 1 || (m.monthly_count || 0) >= 2) {
+    // 【修改點】：升級為常態名單的條件
+    // 1. 活躍度夠高 (monthly_count >= 2)
+    // 2. OR 上週有來 (last_week_status === 1) -> 這樣「新常客」就會出現在上面了
+    if ((m.monthly_count || 0) >= 2 || m.last_week_status === 1) {
       regulars.push(m)
     } else {
       others.push(m)
@@ -278,7 +266,6 @@ const groupedMembers = computed(() => {
   return { regulars, others }
 })
 
-// 全選/取消
 const isAllSelected = computed(() => {
   return filteredMembers.value.length > 0 && 
          filteredMembers.value.every(m => selectedIds.value.includes(m.member_id))

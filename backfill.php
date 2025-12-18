@@ -15,7 +15,7 @@ require_once __DIR__ . "/src/CentralSyncService.php";
 $targetDistrictName = "永和"; 
 
 // 2. 設定要補抓的範圍 (2025年)
-$startWeek = 35; // 9月初約為第 35-36 週
+$startWeek = 49; // 9月初約為第 35-36 週
 $endWeek   = 51; // 目前約為第 51 週
 $year      = 2025;
 // ==========================================
