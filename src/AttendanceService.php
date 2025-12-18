@@ -437,43 +437,43 @@ class AttendanceService {
     //  Local Members Logic (核心除錯區)
     // ==========================================
     // 對應: local-members
+    // 對應: local-members
     private function localMembers() {
         $itemId = $_GET['item_id'] ?? null;
         $dateInput = $_GET['date'] ?? date("Y-m-d");
-
-        // error_log("[LocalMembers] Start. item_id={$itemId}");
+        // 新增參數：決定活躍度計算基準 (self=看自己, sunday=看主日)
+        $benchmarkMode = $_GET['benchmark_mode'] ?? 'self'; 
 
         if (!$itemId) throw new Exception("缺少 item_id");
 
         $dateObj = new DateTime($dateInput);
         
-        // 1. 計算本週主日 (Target Sunday)
+        // 1. 計算本週主日
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $sundayDate = $dateObj->format('Y-m-d');
 
-        // 2. 計算上週主日 (用於前端顯示「上週有來」)
+        // 2. 計算上週主日
         $lastWeekObj = clone $dateObj;
         $lastWeekObj->modify('-7 days');
         $lastSundayDate = $lastWeekObj->format('Y-m-d');
 
-        // 3. 計算一個月前的日期 (用於計算活躍度)
+        // 3. 計算一個月前
         $monthAgoDate = (clone $dateObj)->modify('-28 days')->format('Y-m-d');
 
-        // 建立 ID 轉 中文名 的對照表 (保留您原本的邏輯)
         $idToNameMap = [];
         if (defined('DISTRICT_ID') && is_array(DISTRICT_ID)) {
             foreach (DISTRICT_ID as $name => $val) {
                 $parts = explode(',', $val);
-                if (isset($parts[0])) {
-                    $trimID = trim($parts[0]);
-                    $idToNameMap[$trimID] = $name;
-                }
+                if (isset($parts[0])) $idToNameMap[trim($parts[0])] = $name;
             }
         }
 
-        // 【升級版 SQL】
-        // 新增: r_last (上週狀態), monthly_count (近4週次數)
+        // 決定統計活躍度要用的 item_id
+        // 如果模式是 'sunday'，強制用 37；否則用當前查詢的 $itemId
+        $statsItemId = ($benchmarkMode === 'sunday') ? 37 : $itemId;
+
+        // SQL: 恢復使用 ? 來綁定 statsItemId
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
                        r.status AS current_status, 
                        r.item_id AS record_item,
@@ -482,51 +482,49 @@ class AttendanceService {
                            SELECT COUNT(*) 
                            FROM attendance_records ar 
                            WHERE ar.member_id = m.member_id 
-                           AND ar.item_id = ? 
+                           AND ar.item_id = ?   -- ★ 這裡恢復為變數
                            AND ar.date BETWEEN ? AND ? 
                            AND ar.status = 1
                        ) as monthly_count
                 FROM members m
-                -- Join 本週紀錄
                 LEFT JOIN attendance_records r
                   ON m.member_id = r.member_id AND r.date = ? AND r.item_id = ?
-                -- Join 上週紀錄
                 LEFT JOIN attendance_records r_last
                   ON m.member_id = r_last.member_id AND r_last.date = ? AND r_last.item_id = ?";
         
         $stmt = $this->conn->prepare($sql);
         
-        // 參數順序需嚴格對應 SQL ?
+        // 參數順序:
+        // 1. $statsItemId (活躍度基準)
+        // 2. $monthAgoDate
+        // 3. $sundayDate
+        // 4. $sundayDate (current join)
+        // 5. $itemId (current join)
+        // 6. $lastSundayDate (last join)
+        // 7. $itemId (last join) - 注意：上週狀態永遠看「當下這個聚會」的
         $stmt->execute([
-            $itemId,        // monthly_count item
-            $monthAgoDate,  // monthly_count start
-            $sundayDate,    // monthly_count end
-            $sundayDate,    // current date
-            $itemId,        // current item
-            $lastSundayDate,// last week date
-            $itemId         // last week item
+            $statsItemId,   
+            $monthAgoDate, 
+            $sundayDate, 
+            $sundayDate, 
+            $itemId, 
+            $lastSundayDate, 
+            $itemId
         ]);
         
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // error_log("[LocalMembers] DB fetched rows: " . count($rows));
-
-        // 轉換資料
         $members = array_map(function ($row) use ($itemId, $idToNameMap) {
-            
-            // ID 轉 中文名
             $rId = $row["region_id"] ?? "";
-            $rName = $idToNameMap[$rId] ?? $rId; // 找不到就回傳 ID
+            $rName = $idToNameMap[$rId] ?? $rId; 
             
             return [
                 "member_id"        => intval($row["member_id"]),
                 "member_name"      => $row["name"],
                 "sex"              => $row["gender"],
-                "small_group_name" => $rName, // 前端顯示用
+                "small_group_name" => $rName,
                 "item_id"          => intval($row["record_item"] ?? $itemId),
                 "status"           => is_null($row["current_status"]) ? null : intval($row["current_status"]),
-                
-                // 新增欄位給前端智慧功能使用
                 "last_week_status" => is_null($row["last_week_status"]) ? 0 : intval($row["last_week_status"]),
                 "monthly_count"    => intval($row["monthly_count"])
             ];

@@ -24,21 +24,40 @@
     />
 
     <div class="bg-[#0f172a] p-1.5 rounded-2xl mb-5 shadow-inner border border-white/5">
-      <div class="grid grid-cols-2 gap-2">
+      <div class="flex justify-between items-center px-1">
+        
+        <div class="flex space-x-2">
+          <button 
+            @click="activeTab = 'district'" 
+            class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all duration-300"
+            :class="activeTab === 'district' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
+          >
+            {{ userProfile.sub_district || '本區' }}
+          </button>
+          <button 
+            @click="activeTab = 'custom'" 
+            class="px-4 py-2.5 rounded-xl text-xs font-bold transition-all duration-300"
+            :class="activeTab === 'custom' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
+          >
+            自訂
+          </button>
+        </div>
+
         <button 
-          @click="activeTab = 'district'" 
-          class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
-          :class="activeTab === 'district' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
+          @click="toggleBenchmark"
+          class="flex items-center space-x-2 px-3 py-1.5 rounded-lg border transition-all duration-300 group"
+          :class="useSundayBenchmark 
+            ? 'bg-amber-500/10 border-amber-500/50 text-amber-400' 
+            : 'bg-transparent border-gray-600/50 text-gray-500 hover:border-gray-400'"
         >
-          <span>{{ userProfile.sub_district || '本區' }}</span>
+          <span class="text-[10px] font-bold">參考主日</span>
+          <div class="w-7 h-3.5 rounded-full relative transition-colors duration-300"
+               :class="useSundayBenchmark ? 'bg-amber-500' : 'bg-gray-700'">
+            <div class="absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all duration-300 shadow-sm"
+                 :class="useSundayBenchmark ? 'left-4' : 'left-0.5'"></div>
+          </div>
         </button>
-        <button 
-          @click="activeTab = 'custom'" 
-          class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
-          :class="activeTab === 'custom' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
-        >
-          <span>自訂名單</span>
-        </button>
+
       </div>
     </div>
 
@@ -75,7 +94,9 @@
         
         <div v-if="groupedMembers.regulars.length > 0" class="mb-6">
           <div class="flex items-center space-x-2 px-2 mb-3 text-blue-200/80">
-            <span class="text-sm font-bold">📋 常態出席</span>
+            <span class="text-sm font-bold transition-all duration-300">
+              {{ useSundayBenchmark ? '📋 主日常客' : '📋 本會常客' }}
+            </span>
             <div class="h-px flex-1 bg-gradient-to-r from-blue-500/30 to-transparent"></div>
             <span class="text-[10px] bg-blue-500/10 px-2 py-0.5 rounded text-blue-300">
               {{ groupedMembers.regulars.length }}
@@ -164,15 +185,22 @@ const selectedIds = ref([])
 const loadingMembers = ref(false)
 const submitting = ref(false)
 
-// 載入名單 & 智慧預選
+// 新增狀態：是否以主日為基準
+const useSundayBenchmark = ref(false) 
+
+// 載入名單
 async function loadMembers() {
   loadingMembers.value = true
   try {
-    const res = await fetchMembers(meetingType.value, date.value)
+    // 根據開關決定傳送給後端的模式
+    const benchmarkMode = useSundayBenchmark.value ? 'sunday' : 'self'
+    
+    // 呼叫 API (需確認 api/rollcall.js 已支援第三個參數)
+    const res = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     members.value = res || []
     
-    // 檢查本週是否已有任何紀錄 (status = 1 或 0)
-    // 注意：PHP 回傳的 current_status 若為 null 代表沒點過
+    // 自動勾選邏輯：檢查當週紀錄
+    // 注意：這裡只會看「當前 meetingType」有沒有點過，與 benchmarkMode 無關
     const hasCurrentRecords = members.value.some(m => m.status === 1 || m.status === 0)
 
     if (hasCurrentRecords) {
@@ -182,7 +210,7 @@ async function loadMembers() {
         .map(m => m.member_id)
     } else {
       // 情況 B：本週全新 -> 啟動「智慧預選」
-      // 預選規則：上週有出席 (last_week_status === 1) 的人
+      // 預選規則：上週有來過「這個聚會」的人 (last_week_status 永遠是指當前 meetingType)
       selectedIds.value = members.value
         .filter(m => m.last_week_status === 1)
         .map(m => m.member_id)
@@ -196,10 +224,22 @@ async function loadMembers() {
   }
 }
 
-watch([meetingType, date], loadMembers)
+// 切換基準的函式
+function toggleBenchmark() {
+  useSundayBenchmark.value = !useSundayBenchmark.value
+  loadMembers() // 重新載入以更新排序
+}
+
+// 監聽變化
+watch([meetingType, date], () => {
+  // 當切換聚會或日期時，預設重置回「看自己」，避免使用者混淆 (可依需求移除此行)
+  useSundayBenchmark.value = false 
+  loadMembers()
+})
+
 onMounted(loadMembers)
 
-// 1. 先執行基礎篩選 (小區/關鍵字)
+// 1. 基礎篩選 (小區/關鍵字)
 const filteredMembers = computed(() => {
   if (!Array.isArray(members.value)) return [];
 
@@ -215,20 +255,19 @@ const filteredMembers = computed(() => {
         return groupName.includes(target) || target.includes(groupName);
     });
   } else {
-    // 暫時保留自訂名單的介面，未來可擴充
     return []; 
   }
 });
 
-// 2. 智慧分區邏輯 (常態 vs 關懷)
+// 2. 智慧分區邏輯
 const groupedMembers = computed(() => {
   const regulars = []
   const others = []
   
   filteredMembers.value.forEach(m => {
     // 判斷標準：
-    // 1. 上週有來 (last_week_status === 1)
-    // 2. 近一個月出席 >= 2 次 (monthly_count >= 2)
+    // 1. 上週有來這個聚會 (last_week_status === 1)
+    // 2. 近一個月活躍度高 (monthly_count >= 2) -> 這裡的 monthly_count 已經根據 benchmarkMode 變過身了
     if (m.last_week_status === 1 || (m.monthly_count || 0) >= 2) {
       regulars.push(m)
     } else {
@@ -236,12 +275,10 @@ const groupedMembers = computed(() => {
     }
   })
 
-  // 如果「常態區」完全沒人，為了避免畫面奇怪，可以把所有人都放到常態區顯示
-  // 或者保持現狀，顯示在「關懷名單」區
   return { regulars, others }
 })
 
-// 全選/取消 (針對目前顯示的所有人)
+// 全選/取消
 const isAllSelected = computed(() => {
   return filteredMembers.value.length > 0 && 
          filteredMembers.value.every(m => selectedIds.value.includes(m.member_id))
@@ -290,7 +327,7 @@ async function confirmSubmit() {
       
       if (res.status === 'success') {
         alert("點名成功！")
-        loadMembers() // 重新載入以更新狀態
+        loadMembers() 
       } else {
         alert("送出失敗：" + res.message)
       }
