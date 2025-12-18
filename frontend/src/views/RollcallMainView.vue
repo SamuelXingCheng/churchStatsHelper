@@ -102,7 +102,8 @@
               {{ groupedMembers.regulars.length }}
             </span>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          
+          <div class="grid grid-cols-3 gap-2">
             <MemberCard 
               v-for="member in groupedMembers.regulars" 
               :key="member.member_id"
@@ -121,7 +122,8 @@
               {{ groupedMembers.others.length }}
             </span>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-90">
+          
+          <div class="grid grid-cols-3 gap-2 opacity-90">
             <MemberCard 
               v-for="member in groupedMembers.others" 
               :key="member.member_id"

@@ -2,51 +2,39 @@
   <div 
     v-if="member"
     @click="$emit('toggle')"
-    class="flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all duration-300 group relative overflow-hidden"
+    class="flex flex-col justify-center p-3 rounded-xl border-2 cursor-pointer transition-all duration-200 relative overflow-hidden min-h-[80px]"
     :class="isSelected 
-      ? 'bg-navy-light border-accent-gold/40 shadow-[0_0_15px_rgba(197,165,114,0.05)]' 
-      : 'bg-navy-light/40 border-transparent hover:bg-navy-light hover:border-white/5'"
+      ? 'bg-navy-light border-accent-gold shadow-[0_0_15px_rgba(197,165,114,0.15)]' 
+      : 'bg-navy-light/30 border-transparent hover:bg-navy-light/50 hover:border-white/10'"
   >
-    <div v-if="isSelected" class="absolute inset-0 bg-accent-gold/5 z-0"></div>
+    <div v-if="isSelected" class="absolute inset-0 bg-accent-gold/10 z-0"></div>
 
-    <div class="flex items-center space-x-4 z-10 w-full">
-      <div 
-        class="flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-300"
-        :class="isSelected 
-          ? 'bg-accent-gold border-accent-gold scale-100' 
-          : 'border-gray-600 bg-transparent group-hover:border-gray-400'"
-      >
-        <svg v-if="isSelected" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-navy-base" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-        </svg>
+    <div class="relative z-10 flex flex-col items-center text-center space-y-1">
+      
+      <div class="font-bold text-lg leading-tight break-words w-full" 
+           :class="isSelected ? 'text-white drop-shadow-md' : 'text-gray-300'">
+        {{ member.member_name || '無姓名' }}
       </div>
 
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center flex-wrap gap-2">
-          <div class="font-bold text-lg tracking-wide transition-colors truncate" :class="isSelected ? 'text-white' : 'text-gray-200'">
-            {{ member.member_name || '無姓名' }}
-          </div>
-
-          <div class="flex items-center space-x-1">
-             <span v-if="isNewRegular" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 whitespace-nowrap">
-               ✨ 新常客
-             </span>
-
-             <span v-if="member.last_week_status === 1" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 whitespace-nowrap">
-               上週 V
-             </span>
-          </div>
-        </div>
-        
-        <div class="text-sm text-gray-500 mt-0.5 font-medium truncate">
-          {{ member.small_group_name || '未分組' }}
-        </div>
+      <div class="text-xs font-medium" :class="isSelected ? 'text-blue-200' : 'text-gray-500'">
+        {{ member.small_group_name || '未分組' }}
       </div>
+
+      <div v-if="isNewRegular || member.last_week_status === 1" class="flex flex-wrap justify-center gap-1 mt-1">
+         <span v-if="isNewRegular" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+           ✨新
+         </span>
+         <span v-if="member.last_week_status === 1" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+           上週有
+         </span>
+      </div>
+
     </div>
 
-    <div v-if="member.status === 1" class="z-10 px-2.5 py-1 rounded text-xs font-bold bg-green-900/30 text-green-500/80 border border-green-500/10 whitespace-nowrap ml-2">
-      已點
+    <div v-if="member.status === 1" class="absolute top-1 right-1">
+      <div class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-lg shadow-green-500/50"></div>
     </div>
+
   </div>
 </template>
 
@@ -54,18 +42,12 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  member: {
-    type: Object,
-    required: true,
-    default: () => ({ member_name: '', small_group_name: '', status: null })
-  },
+  member: Object,
   isSelected: Boolean
 })
 
 defineEmits(["toggle"])
 
-// 計算是否為「新常客」
-// 定義：上週有來 (last_week_status === 1) 但 活躍度低 (monthly_count < 2)
 const isNewRegular = computed(() => {
     return props.member.last_week_status === 1 && (props.member.monthly_count || 0) < 2
 })
