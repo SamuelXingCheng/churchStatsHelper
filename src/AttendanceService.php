@@ -436,36 +436,34 @@ class AttendanceService {
     // ==========================================
     //  Local Members Logic (核心除錯區)
     // ==========================================
+    // 對應: local-members
     private function localMembers() {
         $itemId = $_GET['item_id'] ?? null;
         $dateInput = $_GET['date'] ?? date("Y-m-d");
 
-        error_log("[LocalMembers] Start. item_id={$itemId}");
+        // error_log("[LocalMembers] Start. item_id={$itemId}");
 
         if (!$itemId) throw new Exception("缺少 item_id");
 
         $dateObj = new DateTime($dateInput);
+        
+        // 1. 計算本週主日 (Target Sunday)
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $sundayDate = $dateObj->format('Y-m-d');
-        
-        // ★★★ DEBUG 重點 1: 檢查設定檔讀取狀況 ★★★
-        if (defined('DISTRICT_ID')) {
-            $mapCount = is_array(DISTRICT_ID) ? count(DISTRICT_ID) : 0;
-            error_log("[LocalMembers] DISTRICT_ID is defined. Count: " . $mapCount);
-            // 如果數量是 0，代表 .env 讀取失敗或格式錯誤
-            if ($mapCount === 0) {
-                error_log("[LocalMembers] CRITICAL WARNING: DISTRICT_ID array is empty! Check your .env DISTRICT_MAPS.");
-            }
-        } else {
-            error_log("[LocalMembers] CRITICAL ERROR: DISTRICT_ID constant is NOT defined!");
-        }
 
-        // 建立 ID 轉 中文名 的對照表
+        // 2. 計算上週主日 (用於前端顯示「上週有來」)
+        $lastWeekObj = clone $dateObj;
+        $lastWeekObj->modify('-7 days');
+        $lastSundayDate = $lastWeekObj->format('Y-m-d');
+
+        // 3. 計算一個月前的日期 (用於計算活躍度)
+        $monthAgoDate = (clone $dateObj)->modify('-28 days')->format('Y-m-d');
+
+        // 建立 ID 轉 中文名 的對照表 (保留您原本的邏輯)
         $idToNameMap = [];
         if (defined('DISTRICT_ID') && is_array(DISTRICT_ID)) {
             foreach (DISTRICT_ID as $name => $val) {
-                // $val 格式為 "7586,3" => 取出 7586
                 $parts = explode(',', $val);
                 if (isset($parts[0])) {
                     $trimID = trim($parts[0]);
@@ -474,46 +472,63 @@ class AttendanceService {
             }
         }
 
-        // SQL 查詢
+        // 【升級版 SQL】
+        // 新增: r_last (上週狀態), monthly_count (近4週次數)
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
-                       r.status, r.item_id AS record_item
+                       r.status AS current_status, 
+                       r.item_id AS record_item,
+                       r_last.status AS last_week_status,
+                       (
+                           SELECT COUNT(*) 
+                           FROM attendance_records ar 
+                           WHERE ar.member_id = m.member_id 
+                           AND ar.item_id = ? 
+                           AND ar.date BETWEEN ? AND ? 
+                           AND ar.status = 1
+                       ) as monthly_count
                 FROM members m
+                -- Join 本週紀錄
                 LEFT JOIN attendance_records r
-                  ON m.member_id = r.member_id AND r.date = ? AND r.item_id = ?";
+                  ON m.member_id = r.member_id AND r.date = ? AND r.item_id = ?
+                -- Join 上週紀錄
+                LEFT JOIN attendance_records r_last
+                  ON m.member_id = r_last.member_id AND r_last.date = ? AND r_last.item_id = ?";
         
         $stmt = $this->conn->prepare($sql);
-        $stmt->execute([$sundayDate, $itemId]);
+        
+        // 參數順序需嚴格對應 SQL ?
+        $stmt->execute([
+            $itemId,        // monthly_count item
+            $monthAgoDate,  // monthly_count start
+            $sundayDate,    // monthly_count end
+            $sundayDate,    // current date
+            $itemId,        // current item
+            $lastSundayDate,// last week date
+            $itemId         // last week item
+        ]);
+        
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        error_log("[LocalMembers] DB fetched rows: " . count($rows));
+        // error_log("[LocalMembers] DB fetched rows: " . count($rows));
 
         // 轉換資料
-        $firstLog = false;
-        $members = array_map(function ($row) use ($itemId, $idToNameMap, &$firstLog) {
+        $members = array_map(function ($row) use ($itemId, $idToNameMap) {
             
-            // ★ 將資料庫裡的 ID (7586) 轉回 中文 (永和)
+            // ID 轉 中文名
             $rId = $row["region_id"] ?? "";
             $rName = $idToNameMap[$rId] ?? $rId; // 找不到就回傳 ID
             
-            // ★★★ DEBUG 重點 2: 印出第一筆轉換結果 ★★★
-            if (!$firstLog) {
-                error_log("[LocalMembers] Mapping Check: ID [{$rId}] => Name [{$rName}]");
-                if ($rId == $rName) {
-                    error_log("[LocalMembers] MAPPING FAILED: ID was not converted to Name. Check DISTRICT_ID config.");
-                } else {
-                    error_log("[LocalMembers] MAPPING SUCCESS: ID converted to Name.");
-                    error_log("[LocalMembers] Name First Char: " . mb_substr($row["name"], 0, 3, "UTF-8"));
-                }
-                $firstLog = true;
-            }
-            
             return [
-                "member_id"   => intval($row["member_id"]),
-                "member_name" => $row["name"],
-                "sex"         => $row["gender"],
-                "small_group_name" => $rName, // 前端要的中文
-                "item_id"     => intval($row["record_item"] ?? $itemId),
-                "status"      => is_null($row["status"]) ? null : intval($row["status"]),
+                "member_id"        => intval($row["member_id"]),
+                "member_name"      => $row["name"],
+                "sex"              => $row["gender"],
+                "small_group_name" => $rName, // 前端顯示用
+                "item_id"          => intval($row["record_item"] ?? $itemId),
+                "status"           => is_null($row["current_status"]) ? null : intval($row["current_status"]),
+                
+                // 新增欄位給前端智慧功能使用
+                "last_week_status" => is_null($row["last_week_status"]) ? 0 : intval($row["last_week_status"]),
+                "monthly_count"    => intval($row["monthly_count"])
             ];
         }, $rows);
 

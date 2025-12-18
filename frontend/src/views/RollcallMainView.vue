@@ -1,5 +1,7 @@
 <template>
-  <div class="pb-24"> <div v-if="!loginSuccess" class="bg-[#2a1c1c]/80 border border-orange-500/30 rounded-2xl p-4 mb-6 flex items-center justify-between shadow-lg">
+  <div class="pb-24">
+    
+    <div v-if="!loginSuccess" class="bg-[#2a1c1c]/80 border border-orange-500/30 rounded-2xl p-4 mb-6 flex items-center justify-between shadow-lg">
       <div class="flex items-center space-x-3 text-orange-200">
         <div class="bg-orange-500/20 p-1.5 rounded-full animate-pulse">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -28,7 +30,6 @@
           class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
           :class="activeTab === 'district' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
         >
-          <!-- <span>🏠</span> -->
           <span>{{ userProfile.sub_district || '本區' }}</span>
         </button>
         <button 
@@ -36,7 +37,6 @@
           class="py-2.5 rounded-xl text-xs font-bold transition-all duration-300 flex justify-center items-center space-x-1"
           :class="activeTab === 'custom' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'"
         >
-          <!-- <span>⭐</span> -->
           <span>自訂名單</span>
         </button>
       </div>
@@ -60,7 +60,8 @@
       </div>
     </div>
 
-    <div class="bg-[#0f172a]/50 rounded-3xl p-3 border border-white/5 min-h-[200px] shadow-inner">
+    <div class="bg-[#0f172a]/50 rounded-3xl p-3 border border-white/5 min-h-[200px] shadow-inner space-y-6">
+      
       <div v-if="loadingMembers" class="space-y-3 p-1">
         <div v-for="i in 3" :key="i" class="h-16 bg-[#1e325c] rounded-xl animate-pulse"></div>
       </div>
@@ -70,14 +71,46 @@
         <p class="text-xs tracking-wider">暫無名單資料</p>
       </div>
 
-      <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <MemberCard 
-          v-for="member in filteredMembers" 
-          :key="member.member_id"
-          :member="member"
-          :isSelected="selectedIds.includes(member.member_id)"
-          @toggle="toggleMember(member.member_id)"
-        />
+      <div v-else>
+        
+        <div v-if="groupedMembers.regulars.length > 0" class="mb-6">
+          <div class="flex items-center space-x-2 px-2 mb-3 text-blue-200/80">
+            <span class="text-sm font-bold">📋 常態出席</span>
+            <div class="h-px flex-1 bg-gradient-to-r from-blue-500/30 to-transparent"></div>
+            <span class="text-[10px] bg-blue-500/10 px-2 py-0.5 rounded text-blue-300">
+              {{ groupedMembers.regulars.length }}
+            </span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <MemberCard 
+              v-for="member in groupedMembers.regulars" 
+              :key="member.member_id"
+              :member="member"
+              :isSelected="selectedIds.includes(member.member_id)"
+              @toggle="toggleMember(member.member_id)"
+            />
+          </div>
+        </div>
+
+        <div v-if="groupedMembers.others.length > 0">
+          <div class="flex items-center space-x-2 px-2 mb-3 text-gray-400/80">
+            <span class="text-sm font-bold">🌱 關懷名單</span>
+            <div class="h-px flex-1 bg-gradient-to-r from-gray-600/30 to-transparent"></div>
+            <span class="text-[10px] bg-gray-700/30 px-2 py-0.5 rounded text-gray-400">
+              {{ groupedMembers.others.length }}
+            </span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-90">
+            <MemberCard 
+              v-for="member in groupedMembers.others" 
+              :key="member.member_id"
+              :member="member"
+              :isSelected="selectedIds.includes(member.member_id)"
+              @toggle="toggleMember(member.member_id)"
+            />
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -112,7 +145,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import RollcallFilterBar from '../components/RollcallFilterBar.vue'
-import MemberCard from '../components/MemberCard.vue' // 需更新 MemberCard 支援點擊
+import MemberCard from '../components/MemberCard.vue' 
 import { fetchMembers, submitAttendance } from '../api/rollcall.js'
 
 const props = defineProps({
@@ -123,27 +156,37 @@ const props = defineProps({
 const emit = defineEmits(['openLogin'])
 
 // 狀態
-const meetingType = ref('38') // 預設家聚會 (需對應您的 Config)
+const meetingType = ref('38') 
 const date = ref(new Date().toISOString().split('T')[0])
-const activeTab = ref('district') // 'district' | 'custom'
+const activeTab = ref('district') 
 const members = ref([])
 const selectedIds = ref([])
 const loadingMembers = ref(false)
 const submitting = ref(false)
 
-// 載入名單
+// 載入名單 & 智慧預選
 async function loadMembers() {
   loadingMembers.value = true
   try {
-    // 這裡我們暫時抓取全區名單，前端再做篩選
-    // 未來您可以優化後端 API 直接支援篩選
     const res = await fetchMembers(meetingType.value, date.value)
     members.value = res || []
     
-    // 自動勾選已點名的人 (status = 1)
-    selectedIds.value = members.value
-      .filter(m => m.status === 1)
-      .map(m => m.member_id)
+    // 檢查本週是否已有任何紀錄 (status = 1 或 0)
+    // 注意：PHP 回傳的 current_status 若為 null 代表沒點過
+    const hasCurrentRecords = members.value.some(m => m.status === 1 || m.status === 0)
+
+    if (hasCurrentRecords) {
+      // 情況 A：資料庫已有本週紀錄 -> 顯示資料庫的結果
+      selectedIds.value = members.value
+        .filter(m => m.status === 1)
+        .map(m => m.member_id)
+    } else {
+      // 情況 B：本週全新 -> 啟動「智慧預選」
+      // 預選規則：上週有出席 (last_week_status === 1) 的人
+      selectedIds.value = members.value
+        .filter(m => m.last_week_status === 1)
+        .map(m => m.member_id)
+    }
       
   } catch (e) {
     console.error(e)
@@ -153,64 +196,52 @@ async function loadMembers() {
   }
 }
 
-// 監聽條件變更，重新載入
 watch([meetingType, date], loadMembers)
 onMounted(loadMembers)
 
-// 篩選邏輯 (核心功能 3)
+// 1. 先執行基礎篩選 (小區/關鍵字)
 const filteredMembers = computed(() => {
-  // 1. 原始資料檢查
-  console.log("[Debug] 收到 members 資料筆數:", members.value?.length);
-  
-  if (!Array.isArray(members.value)) {
-    console.warn("[Debug] members.value 不是陣列！");
-    return [];
-  }
+  if (!Array.isArray(members.value)) return [];
 
   if (activeTab.value === 'district') {
-    // 2. 獲取使用者的小區設定
     const targetSub = props.userProfile.sub_district || '';
-    console.log("[Debug] 當前使用者小區設定 (targetSub):", `"${targetSub}"`);
-    
-    // 3. 基本有效性檢查
     const validMembers = members.value.filter(m => m && (m.member_id || m.id));
-    console.log("[Debug] 有效成員數量 (排除 undefined):", validMembers.length);
 
-    if (!targetSub) {
-      console.log("[Debug] 使用者未設定小區，顯示所有成員");
-      return validMembers;
-    }
+    if (!targetSub) return validMembers;
     
-    // 4. 執行篩選比對
-    const result = validMembers.filter(m => {
-        // 這裡確保讀取到的欄位是 small_group_name (後端已轉為中文)
+    return validMembers.filter(m => {
         const groupName = String(m.small_group_name || '');
         const target = String(targetSub);
-        
-        // 模糊比對邏輯
-        const isMatch = groupName.includes(target) || target.includes(groupName);
-        
-        // 如果想看每一筆的比對情況，可以取消下面這行註解
-        // console.log(`[Debug] 比對: "${groupName}" vs "${target}" -> ${isMatch}`);
-        
-        return isMatch;
+        return groupName.includes(target) || target.includes(groupName);
     });
-
-    console.log("[Debug] 最終篩選出的成員數量:", result.length);
-    if (result.length > 0) {
-      console.log("[Debug] 篩選出的第一筆樣本:", result[0]);
-    } else {
-      console.warn("[Debug] 篩選後名單為空！請檢查小區名稱是否完全匹配。");
-    }
-
-    return result;
   } else {
-    console.log("[Debug] 當前 Tab 不是 district，顯示空名單");
+    // 暫時保留自訂名單的介面，未來可擴充
     return []; 
   }
 });
 
-// 全選/取消 (核心功能 4)
+// 2. 智慧分區邏輯 (常態 vs 關懷)
+const groupedMembers = computed(() => {
+  const regulars = []
+  const others = []
+  
+  filteredMembers.value.forEach(m => {
+    // 判斷標準：
+    // 1. 上週有來 (last_week_status === 1)
+    // 2. 近一個月出席 >= 2 次 (monthly_count >= 2)
+    if (m.last_week_status === 1 || (m.monthly_count || 0) >= 2) {
+      regulars.push(m)
+    } else {
+      others.push(m)
+    }
+  })
+
+  // 如果「常態區」完全沒人，為了避免畫面奇怪，可以把所有人都放到常態區顯示
+  // 或者保持現狀，顯示在「關懷名單」區
+  return { regulars, others }
+})
+
+// 全選/取消 (針對目前顯示的所有人)
 const isAllSelected = computed(() => {
   return filteredMembers.value.length > 0 && 
          filteredMembers.value.every(m => selectedIds.value.includes(m.member_id))
@@ -219,11 +250,9 @@ const isAllSelected = computed(() => {
 function toggleAll(e) {
   const currentIds = filteredMembers.value.map(m => m.member_id)
   if (e.target.checked) {
-    // 加入所有顯示中的 ID (不重複加入)
     const newIds = new Set([...selectedIds.value, ...currentIds])
     selectedIds.value = Array.from(newIds)
   } else {
-    // 移除所有顯示中的 ID
     selectedIds.value = selectedIds.value.filter(id => !currentIds.includes(id))
   }
 }
@@ -236,14 +265,12 @@ function toggleMember(id) {
   }
 }
 
-// 送出確認 (核心功能 5)
 async function confirmSubmit() {
   if (selectedIds.value.length === 0) {
     alert("請至少勾選一位聖徒！")
     return
   }
 
-  // 使用原生確認視窗 (簡單有效)
   const confirmed = confirm(
     `【送出確認】\n\n` +
     `聚會：${getMeetingName(meetingType.value)}\n` +
@@ -255,7 +282,7 @@ async function confirmSubmit() {
     submitting.value = true
     try {
       const res = await submitAttendance({
-        district: props.userProfile.main_district, // 使用使用者的設定
+        district: props.userProfile.main_district,
         meeting_type: meetingType.value,
         member_ids: selectedIds.value,
         date: date.value
@@ -263,6 +290,7 @@ async function confirmSubmit() {
       
       if (res.status === 'success') {
         alert("點名成功！")
+        loadMembers() // 重新載入以更新狀態
       } else {
         alert("送出失敗：" + res.message)
       }
@@ -275,7 +303,6 @@ async function confirmSubmit() {
 }
 
 function getMeetingName(type) {
-    // 簡單的代碼轉換，優化顯示
     const map = { '38': '家聚會', '39': '小排', '37': '主日' }
     return map[type] || '聚會'
 }
