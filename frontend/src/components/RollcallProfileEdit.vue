@@ -22,22 +22,46 @@
       <form @submit.prevent="handleSubmit" class="space-y-8">
         <div class="space-y-3">
           <label class="text-sm font-bold text-blue-400 uppercase tracking-widest ml-1">所屬大區</label>
-          <input 
-            v-model="form.main_district" 
-            type="text" 
-            placeholder="例如：1"
-            class="w-full bg-navy-base border-2 border-gray-700 text-white text-xl font-bold rounded-2xl px-5 py-5 focus:outline-none focus:border-accent-gold transition-all"
-          />
+          <div class="relative">
+            <select 
+              v-model="form.main_district" 
+              class="w-full bg-navy-base border-2 border-gray-700 text-white text-xl font-bold rounded-2xl px-5 py-5 appearance-none focus:outline-none focus:border-accent-gold transition-all"
+            >
+              <option value="" disabled>請選擇大區</option>
+              <option v-for="district in DISTRICT_ORDER" :key="district" :value="district">
+                {{ district }}
+              </option>
+            </select>
+            <div class="absolute inset-y-0 right-5 flex items-center pointer-events-none">
+              <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
         </div>
 
         <div class="space-y-3">
           <label class="text-sm font-bold text-blue-400 uppercase tracking-widest ml-1">所屬小區 (主要點名)</label>
-          <input 
-            v-model="form.sub_district" 
-            type="text" 
-            placeholder="例如：民生"
-            class="w-full bg-navy-base border-2 border-gray-700 text-white text-2xl font-black rounded-2xl px-5 py-5 focus:outline-none focus:border-accent-gold transition-all"
-          />
+          <div class="relative">
+            <select 
+              v-model="form.sub_district" 
+              :disabled="!form.main_district"
+              class="w-full bg-navy-base border-2 border-gray-700 text-white text-2xl font-black rounded-2xl px-5 py-5 appearance-none focus:outline-none focus:border-accent-gold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="" disabled>
+                {{ form.main_district ? '請選擇小區' : '請先選擇大區' }}
+              </option>
+              <option v-for="sub in subDistrictOptions" :key="sub" :value="sub">
+                {{ sub }}
+              </option>
+            </select>
+            <div class="absolute inset-y-0 right-5 flex items-center pointer-events-none">
+              <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
+          
           <p v-if="needsSync" class="text-xs text-orange-400 ml-2 font-bold animate-pulse">
             ⚠️ 注意：修改此欄位將會重新載入名單
           </p>
@@ -100,6 +124,8 @@
 <script setup>
 import { ref, reactive, watch, onMounted, computed } from 'vue'
 import { syncUserProfile } from '../api/rollcall.js'
+// ★ 引入設定檔
+import { DISTRICTS_DATA, DISTRICT_ORDER } from '../config/districts.js'
 
 const props = defineProps({
   lineUserId: String,
@@ -107,7 +133,6 @@ const props = defineProps({
   isModal: Boolean
 })
 
-// ★ 修正 1: 定義正確的事件名稱 'saved'，讓父層可以接收並關閉視窗
 const emit = defineEmits(['saved', 'close'])
 
 const isSubmitting = ref(false)
@@ -118,7 +143,25 @@ const form = reactive({
   email: ''
 })
 
-// 載入初始資料 (去除前後空白，避免誤判)
+// ★ 計算屬性：根據目前選的大區，自動篩選出對應的小區列表
+const subDistrictOptions = computed(() => {
+  const main = form.main_district
+  return DISTRICTS_DATA[main] || []
+})
+
+// ★ 監聽：當大區改變時，自動清空小區 (避免資料不一致)
+// 注意：只在使用者手動改變時才觸發清空，載入初始資料時不應觸發
+watch(() => form.main_district, (newVal, oldVal) => {
+  if (oldVal && newVal !== oldVal) {
+    // 檢查新大區是否有原本的小區，如果沒有才清空
+    const newOptions = DISTRICTS_DATA[newVal] || []
+    if (!newOptions.includes(form.sub_district)) {
+      form.sub_district = ''
+    }
+  }
+})
+
+// 載入初始資料
 function loadData() {
   if (props.currentUser) {
     form.main_district = (props.currentUser.main_district || '').trim()
@@ -131,8 +174,7 @@ function loadData() {
 onMounted(loadData)
 watch(() => props.currentUser, loadData, { deep: true })
 
-// ★ 修正 2: 嚴格的比對邏輯 (雙重 trim)
-// 只有當「去除空白後的字串」真的不相等時，才視為需要同步
+// 偵測是否需要同步 (比較小區是否有變更)
 const needsSync = computed(() => {
   const oldVal = (props.currentUser.sub_district || '').trim()
   const newVal = (form.sub_district || '').trim()
@@ -144,7 +186,7 @@ async function handleSubmit() {
   
   // 簡單驗證
   if (!form.main_district || !form.sub_district) {
-    alert("請填寫大區與小區")
+    alert("請選擇大區與小區")
     return
   }
 
@@ -160,9 +202,8 @@ async function handleSubmit() {
     const res = await syncUserProfile(payload)
     
     if (res.status === 'success') {
-      // ★ 修正 3: 使用 setTimeout 讓使用者看清楚「打勾/完成」的感覺後再關閉
       setTimeout(() => {
-        emit('saved', form) // 發送 'saved' 事件，父層就會關閉視窗
+        emit('saved', form)
       }, 500)
     } else {
       alert('儲存失敗：' + res.message)
@@ -176,7 +217,6 @@ async function handleSubmit() {
 </script>
 
 <style scoped>
-/* 簡單的淡入動畫 */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
