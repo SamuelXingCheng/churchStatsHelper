@@ -25,7 +25,7 @@
           <input 
             v-model="form.main_district" 
             type="text" 
-            placeholder="例如：建成大區"
+            placeholder="例如：1"
             class="w-full bg-navy-base border-2 border-gray-700 text-white text-xl font-bold rounded-2xl px-5 py-5 focus:outline-none focus:border-accent-gold transition-all"
           />
         </div>
@@ -35,7 +35,7 @@
           <input 
             v-model="form.sub_district" 
             type="text" 
-            placeholder="例如：三小組"
+            placeholder="例如：民生"
             class="w-full bg-navy-base border-2 border-gray-700 text-white text-2xl font-black rounded-2xl px-5 py-5 focus:outline-none focus:border-accent-gold transition-all"
           />
           <p v-if="needsSync" class="text-xs text-orange-400 ml-2 font-bold animate-pulse">

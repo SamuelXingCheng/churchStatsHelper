@@ -42,16 +42,11 @@ class AttendanceService {
     }
 
     // ==========================================
-    //  User Profile & Line Login Logic (新增區塊)
+    //  User Profile & Line Login Logic
     // ==========================================
 
-    /**
-     * 處理 Line 登入與個人檔案更新的路由分發
-     */
     private function handleUserProfile() {
         $method = $_SERVER['REQUEST_METHOD'];
-        
-        // 嘗試從各種來源取得參數
         $input = json_decode(file_get_contents("php://input"), true);
         $lineUserId = $_GET['line_user_id'] ?? ($_POST['line_user_id'] ?? ($input['line_user_id'] ?? null));
         $lineDisplayName = $_GET['line_display_name'] ?? ($_POST['line_display_name'] ?? ($input['line_display_name'] ?? null));
@@ -62,36 +57,28 @@ class AttendanceService {
 
         switch ($method) {
             case 'GET':
-                // 讀取個人檔案
                 return $this->fetchUserProfile($lineUserId);
             case 'POST':
-                // 如果請求中包含 line_display_name，視為「登入自動記錄」
                 if ($lineDisplayName) {
                     return $this->loginProfileUpdate($lineUserId, $lineDisplayName);
                 }
-                // 否則視為「表單送出更新」(只更新 district/email)
                 return $this->formProfileUpdate($lineUserId, $input);
             default:
                 throw new Exception("不支援的 HTTP 方法");
         }
     }
     
-    /**
-     * 【登入自動記錄】
-     * 處理 Line 登入成功時，自動將 Line ID 和暱稱寫入資料庫
-     */
     private function loginProfileUpdate($lineUserId, $lineDisplayName) {
         $sql = "INSERT INTO user_profiles 
                 (line_user_id, line_display_name, created_at, updated_at) 
                 VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ON DUPLICATE KEY UPDATE 
-                line_display_name = VALUES(line_display_name), -- 每次登入都更新 Line 暱稱 (如果使用者改名)
+                line_display_name = VALUES(line_display_name),
                 updated_at = CURRENT_TIMESTAMP";
         
         $stmt = $this->conn->prepare($sql);
         $stmt->execute([$lineUserId, $lineDisplayName]);
         
-        // 回傳完整的用戶資料，供前端判斷是否跳轉去填寫大區
         return $this->fetchUserProfile($lineUserId);
     }
 
@@ -105,13 +92,11 @@ class AttendanceService {
             throw new Exception("大區和小區為必填欄位");
         }
 
-        // 1. 先抓取舊設定
         $sqlOld = "SELECT sub_district FROM user_profiles WHERE line_user_id = ?";
         $stmtOld = $this->conn->prepare($sqlOld);
         $stmtOld->execute([$lineUserId]);
         $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
 
-        // 2. 更新資料庫
         $sql = "UPDATE user_profiles SET 
                 main_district = ?, 
                 sub_district = ?, 
@@ -125,15 +110,11 @@ class AttendanceService {
 
         if (!$success) throw new Exception("個人檔案更新失敗");
 
-        // 3. 【智慧判斷】是否需要同步
         $oldSub = isset($old['sub_district']) ? trim($old['sub_district']) : '';
         $isSubDistrictChanged = ($oldSub !== $subDistrict);
         $runSync = false;
 
         if ($isSubDistrictChanged) {
-            // 只要改了小區，我們就預設執行一次深度同步 (補 4 週)
-            // 因為現在參數改為精準的 "7586,3"，我們不能確定舊資料是否包含這些人
-            // 所以這裡拿掉 checkRegionDataExists 的阻擋，確保第一次切換時能抓到正確名單
             $this->syncSmallDistrictData($subDistrict);
             $runSync = true;
         }
@@ -145,11 +126,7 @@ class AttendanceService {
         ];
     }
 
-    /**
-     * 獲取單一使用者檔案 (增加 monitored_districts 欄位)
-     */
     private function fetchUserProfile($lineUserId) {
-        // 請確保您的資料表 user_profiles 已新增 monitored_districts 欄位 (TEXT 類型)
         $sql = "SELECT line_user_id, line_display_name, main_district, sub_district, email, monitored_districts 
                 FROM user_profiles 
                 WHERE line_user_id = ?";
@@ -158,7 +135,6 @@ class AttendanceService {
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$user) {
-            // 如果連 line_user_id 都找不到 (理論上 loginProfileUpdate 已經處理了，但以防萬一)
             $user = [
                 'line_user_id' => $lineUserId,
                 'line_display_name' => '',
@@ -168,7 +144,6 @@ class AttendanceService {
             ];
             $profileComplete = false;
         } else {
-            // 檢查是否完成必填欄位 (大區和子區)
             $profileComplete = !empty($user['main_district']) && !empty($user['sub_district']);
         }
         return [
@@ -179,7 +154,7 @@ class AttendanceService {
     }
 
     // ==========================================
-    //  Central System Logic (中央系統互動)
+    //  Central System Logic
     // ==========================================
 
     private function syncSmallDistrictData($subDistrictName) {
@@ -191,14 +166,12 @@ class AttendanceService {
             return false;
         }
 
-        $churchIdParam = trim($churchIdStr); // 使用完整參數 "7586,3"
-
+        $churchIdParam = trim($churchIdStr);
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) return false;
 
         $syncService = new CentralSyncService();
 
-        // 準備：本週 + 過去 3 週
         $weeks = [];
         for ($i = 0; $i < 4; $i++) {
             $d = new DateTime();
@@ -213,7 +186,6 @@ class AttendanceService {
             $year = $w['year'];
             $week = sprintf("%02d", $w['week']);
 
-            // URL 保持不變 (roll_call_list 為空以抓取所有項目)
             $url = CENTRAL_BASE_URL . "/list_members.php"
                  . "?start=0&limit=1000&year=$year&week=$week" 
                  . "&churches%5B%5D=" . urlencode($churchIdParam) 
@@ -231,9 +203,7 @@ class AttendanceService {
 
             $data = json_decode($result, true);
             
-            // ★★★ 關鍵修改在這裡 ★★★
             if ($data && isset($data['members'])) {
-                // 務必傳入 $year 和 $week，否則 CentralSyncService 會全部當成「本週」存入
                 $syncService->syncMembersAndAttendance($subDistrictName, $data, $year, $week);
             }
             
@@ -242,9 +212,7 @@ class AttendanceService {
         return true;
     }
 
-    // 對應: central_verify.php (使用 uniqid 增強版)
     private function centralVerify() {
-        // 1. 確保 Cookie 資料夾存在且可寫入
         if (!is_writable($this->cookiePath)) {
              @chmod($this->cookiePath, 0777);
         }
@@ -252,23 +220,21 @@ class AttendanceService {
         $cleaner = new CookieCleaner(3600);
         $cleaner->cleanPicCookies();
 
-        $picID = uniqid(); // 使用 uniqid 避免前端選擇器問題
+        $picID = uniqid();
         $cookieFile = $this->cookiePath . "/picCookie_" . $picID . ".tmp";
         
         $loginUrl  = CENTRAL_BASE_URL . "/login.php";
         $verifyUrl = CENTRAL_BASE_URL . "/lib/securimage/securimage_show.php";
 
-        // Step 1: 建立 Session
         $ch = curl_init($loginUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
         curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        $loginContent = curl_exec($ch);
+        curl_exec($ch);
         curl_close($ch);
 
-        // Step 2: 抓圖片
         $ch = curl_init($verifyUrl);
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
@@ -283,7 +249,6 @@ class AttendanceService {
             throw new Exception("無法下載驗證碼圖片 (HTTP $imgHttpCode)");
         }
 
-        // Step 3: 存圖
         $picPath = __DIR__ . "/../pic";
         if (!file_exists($picPath)) mkdir($picPath, 0777, true);
         
@@ -298,7 +263,6 @@ class AttendanceService {
         ];
     }
 
-    // 對應: central_login.php
     private function centralLogin() {
         $input = json_decode(file_get_contents("php://input"), true);
         $verifyCode = $input['verifyCode'] ?? $_POST['verifyCode'] ?? null;
@@ -343,7 +307,6 @@ class AttendanceService {
         }
     }
 
-    // 對應: central_session.php
     private function centralSession() {
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) return ["loggedIn" => false, "message" => "未登入"];
@@ -367,7 +330,6 @@ class AttendanceService {
         return ["loggedIn" => true, "message" => "已登入"];
     }
 
-    // 對應: central_members.php
     private function centralMembers() {
         $district = $_GET['district'] ?? ''; 
         $search   = $_GET['search']   ?? '';
@@ -411,7 +373,6 @@ class AttendanceService {
              throw new Exception("Session 失效，請重新登入。");
         }
     
-        // 安全解析 JSON
         $data = json_decode($result, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             $preview = substr($result, 0, 500); 
@@ -423,7 +384,6 @@ class AttendanceService {
             throw new Exception("中央回傳格式錯誤");
         }
     
-        // 啟用同步功能 (將資料存入 members 表)
         $sync = new CentralSyncService();
         $sync->syncMembersAndAttendance($district, $data);
     
@@ -431,31 +391,25 @@ class AttendanceService {
     }
     
     // ==========================================
-    //  Local Members Logic (核心除錯區)
+    //  Local Members Logic
     // ==========================================
-    // 對應: local-members
-    // 對應: local-members
     private function localMembers() {
         $itemId = $_GET['item_id'] ?? null;
         $dateInput = $_GET['date'] ?? date("Y-m-d");
-        // 新增參數：決定活躍度計算基準 (self=看自己, sunday=看主日)
         $benchmarkMode = $_GET['benchmark_mode'] ?? 'self'; 
 
         if (!$itemId) throw new Exception("缺少 item_id");
 
         $dateObj = new DateTime($dateInput);
         
-        // 1. 計算本週主日
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $sundayDate = $dateObj->format('Y-m-d');
 
-        // 2. 計算上週主日
         $lastWeekObj = clone $dateObj;
         $lastWeekObj->modify('-7 days');
         $lastSundayDate = $lastWeekObj->format('Y-m-d');
 
-        // 3. 計算一個月前
         $monthAgoDate = (clone $dateObj)->modify('-28 days')->format('Y-m-d');
 
         $idToNameMap = [];
@@ -466,11 +420,8 @@ class AttendanceService {
             }
         }
 
-        // 決定統計活躍度要用的 item_id
-        // 如果模式是 'sunday'，強制用 37；否則用當前查詢的 $itemId
         $statsItemId = ($benchmarkMode === 'sunday') ? 37 : $itemId;
 
-        // SQL: 恢復使用 ? 來綁定 statsItemId
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
                        r.status AS current_status, 
                        r.item_id AS record_item,
@@ -479,7 +430,7 @@ class AttendanceService {
                            SELECT COUNT(*) 
                            FROM attendance_records ar 
                            WHERE ar.member_id = m.member_id 
-                           AND ar.item_id = ?   -- ★ 這裡恢復為變數
+                           AND ar.item_id = ?   
                            AND ar.date BETWEEN ? AND ? 
                            AND ar.status = 1
                        ) as monthly_count
@@ -491,14 +442,6 @@ class AttendanceService {
         
         $stmt = $this->conn->prepare($sql);
         
-        // 參數順序:
-        // 1. $statsItemId (活躍度基準)
-        // 2. $monthAgoDate
-        // 3. $sundayDate
-        // 4. $sundayDate (current join)
-        // 5. $itemId (current join)
-        // 6. $lastSundayDate (last join)
-        // 7. $itemId (last join) - 注意：上週狀態永遠看「當下這個聚會」的
         $stmt->execute([
             $statsItemId,   
             $monthAgoDate, 
@@ -530,29 +473,29 @@ class AttendanceService {
         return ["status" => "success", "date" => $sundayDate, "members" => $members];
     }
 
+    // ==========================================
+    //  Attendance Submit Logic (Soft Delete / Update to NULL)
+    // ==========================================
     private function attendanceSubmit() {
         $meetingType = $_POST['meeting_type'] ?? null;
         $memberIds   = $_POST['member_ids'] ?? [];
         $attend      = $_POST['attend'] ?? 1;
         $inputDate   = $_POST['date'] ?? date("Y-m-d");
     
-        // 1. 記錄初始輸入 (Log)
-        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate, Attend: $attend");
+        // 1. Log
+        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate");
     
         // 2. 處理 member_ids 格式
         if (is_string($memberIds)) {
             $memberIds = array_filter(explode(',', $memberIds));
         }
-        $memberIds = array_map('intval', (array)$memberIds);
+        $newMemberIds = array_map('intval', (array)$memberIds); 
         
-        // 記錄解析後的 IDs (Log)
-        error_log("[Attendance] 解析後的 MemberIDs: " . json_encode($memberIds));
-    
-        if (!$meetingType || empty($memberIds)) {
-            error_log("[Attendance] 錯誤: 缺少參數 (Type 或 IDs 為空)");
-            throw new Exception("缺少參數");
+        if (!$meetingType) {
+            throw new Exception("缺少參數: meeting_type");
         }
     
+        // 3. 計算日期定位
         $dateObj = new DateTime($inputDate);
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
@@ -560,47 +503,158 @@ class AttendanceService {
         $year = (int)$dateObj->format("o");
         $week = (int)$dateObj->format("W");
     
-        // Step 1: 寫入本地 DB
+        // =========================================================
+        // Step A: 找出「被取消」的人 (Diff Check)
+        // =========================================================
+        $cancelledIds = [];
         try {
-            foreach ($memberIds as $id) {
-                $sql = "INSERT INTO attendance_records 
-                        (member_id, item_id, date, year, week, status, district_id, created_at, synced) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 0)
-                        ON DUPLICATE KEY UPDATE 
-                        status=VALUES(status), synced=0, updated_at=NOW()";
-                $this->conn->prepare($sql)->execute([
-                    $id, $meetingType, $date, $year, $week, $attend, CHURCHID
-                ]);
-            }
-            error_log("[Attendance] 本地 DB 寫入完成 (共 " . count($memberIds) . " 筆)");
+            // 找出原本狀態為 1 的人
+            $sqlCheck = "SELECT member_id FROM attendance_records 
+                         WHERE date = ? AND item_id = ? AND status = 1";
+            $stmtCheck = $this->conn->prepare($sqlCheck);
+            $stmtCheck->execute([$date, $meetingType]);
+            $existingIds = $stmtCheck->fetchAll(PDO::FETCH_COLUMN, 0); 
+            $existingIds = array_map('intval', $existingIds);
+
+            // 計算差集
+            $cancelledIds = array_diff($existingIds, $newMemberIds);
         } catch (Exception $e) {
+            error_log("[Attendance] 讀取舊名單失敗: " . $e->getMessage());
+        }
+
+        // =========================================================
+        // Step B: 本地資料庫更新
+        // =========================================================
+        try {
+            if (method_exists($this->conn, 'beginTransaction')) {
+                $this->conn->beginTransaction();
+            }
+
+            // 1. 執行「取消」 (UPDATE status = NULL)
+            // 這部分邏輯不變，只更新 status，不會動到 group_id/region_id
+            if (!empty($cancelledIds)) {
+                $placeholders = implode(',', array_fill(0, count($cancelledIds), '?'));
+                $sqlUpdate = "UPDATE attendance_records 
+                              SET status = NULL, synced = 0, updated_at = NOW() 
+                              WHERE date = ? AND item_id = ? 
+                              AND member_id IN ($placeholders)";
+                $params = array_merge([$date, $meetingType], $cancelledIds);
+                $this->conn->prepare($sqlUpdate)->execute($params);
+            }
+
+            // 2. 執行「新增/出席」 (INSERT with Full Details)
+            if (!empty($newMemberIds)) {
+                
+                // ★ 新增步驟：先去 members 表查出這些人的詳細資料 (group_id, region_id, category)
+                $placeholders = implode(',', array_fill(0, count($newMemberIds), '?'));
+                $sqlDetails = "SELECT member_id, group_id, region_id, category 
+                               FROM members WHERE member_id IN ($placeholders)";
+                $stmtDetails = $this->conn->prepare($sqlDetails);
+                $stmtDetails->execute($newMemberIds);
+                
+                // 將結果轉為以 member_id 為 Key 的陣列，方便查找
+                $memberInfos = [];
+                while ($row = $stmtDetails->fetch(PDO::FETCH_ASSOC)) {
+                    $memberInfos[$row['member_id']] = $row;
+                }
+
+                // ★ 修改 SQL：加入 group_id, region_id, category 欄位
+                $sqlInsert = "INSERT INTO attendance_records 
+                              (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at, synced) 
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 0)
+                              ON DUPLICATE KEY UPDATE 
+                              status = 1, synced = 0, updated_at = NOW()"; 
+                              // 注意：Duplicate 時我們通常只更新 status，不一定要更新 group_id，除非你想確保資料永遠最新
+
+                $stmtInsert = $this->conn->prepare($sqlInsert);
+
+                foreach ($newMemberIds as $id) {
+                    // 從剛剛查到的資料中取出對應值
+                    $info = $memberInfos[$id] ?? [];
+                    $groupId  = $info['group_id'] ?? null;
+                    $regionId = $info['region_id'] ?? null;
+                    $category = $info['category'] ?? null;
+
+                    $stmtInsert->execute([
+                        $id, 
+                        $meetingType, 
+                        $date, 
+                        $year, 
+                        $week, 
+                        1, 
+                        CHURCHID, 
+                        $groupId,  // 補上 group_id
+                        $regionId, // 補上 region_id
+                        $category  // 補上 category
+                    ]);
+                }
+            }
+
+            if (method_exists($this->conn, 'commit')) {
+                $this->conn->commit();
+            }
+
+        } catch (Exception $e) {
+            if (method_exists($this->conn, 'rollBack')) {
+                $this->conn->rollBack();
+            }
             error_log("[Attendance] 本地 DB 寫入失敗: " . $e->getMessage());
             return ["status" => "error", "message" => "本地資料庫寫入失敗"];
         }
     
-        // Step 2: 呼叫中央 API
+        // =========================================================
+        // Step C: 中央同步 (邏輯不變)
+        // =========================================================
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
-            error_log("[Attendance] 警告: 找不到 Cookie 檔案 ($cookieFile)，無法同步中央");
-            return ["status" => "pending", "message" => "已存本地，但中央未登入，無法同步"];
+            return ["status" => "success", "message" => "已存本地 (Full Info)，但中央未連線"];
         }
-    
-        $postData = [
-            'meeting' => $meetingType,
-            'year'    => $year,
-            'week'    => $week,
-            'attend'  => $attend,
-            'member_ids' => $memberIds
-        ];
-    
-        $postString = http_build_query($postData);
+
         $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
-        
-        error_log("[Attendance] 準備呼叫中央 API: $url");
-    
+        $syncErrors = 0;
+
+        // 同步 1: 出席 (Status = 1)
+        if (!empty($newMemberIds)) {
+            $postData = [
+                'meeting'    => $meetingType,
+                'year'       => $year,
+                'week'       => $week,
+                'attend'     => 1, 
+                'member_ids' => $newMemberIds
+            ];
+            if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
+        }
+
+        // 同步 2: 取消 (Status = 0)
+        if (!empty($cancelledIds)) {
+            $postData = [
+                'meeting'    => $meetingType,
+                'year'       => $year,
+                'week'       => $week,
+                'attend'     => 0, 
+                'member_ids' => array_values($cancelledIds) 
+            ];
+            if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
+        }
+
+        if ($syncErrors === 0) {
+            $allProcessedIds = array_merge($newMemberIds, $cancelledIds);
+            if (!empty($allProcessedIds)) {
+                $placeholders = implode(',', array_fill(0, count($allProcessedIds), '?'));
+                $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW() 
+                              WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
+                $this->conn->prepare($updateSql)->execute(array_merge($allProcessedIds, [$meetingType, $date]));
+            }
+            return ["status" => "success", "message" => "點名成功，中央已完整同步"];
+        } else {
+            return ["status" => "pending", "message" => "本地已更新，但中央同步部分失敗"];
+        }
+    }
+    // 輔助函式：發送 curl 請求
+    private function sendToCentral($url, $postData, $cookieFile) {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $postString);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postData));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
@@ -608,23 +662,9 @@ class AttendanceService {
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
         curl_close($ch);
-    
-        if ($httpCode == 200) {
-            // 更新本地 synced=1
-            $placeholders = implode(',', array_fill(0, count($memberIds), '?'));
-            $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW() 
-                          WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
-            $params = array_merge($memberIds, [$meetingType, $date]);
-            $this->conn->prepare($updateSql)->execute($params);
-    
-            error_log("[Attendance] 中央同步成功 (HTTP 200)");
-            return ["status" => "success", "message" => "點名成功，中央已同步"];
-        } else {
-            error_log("[Attendance] 中央同步失敗! HTTP Code: $httpCode, Curl Error: $curlError, Response: $response");
-            return ["status" => "pending", "message" => "中央同步失敗，HTTP $httpCode"];
-        }
+
+        return ($httpCode == 200);
     }
 }
 ?>
