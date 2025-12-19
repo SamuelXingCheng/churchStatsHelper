@@ -329,7 +329,7 @@ async function confirmSubmit() {
 }
 
 function getMeetingName(type) {
-    const map = { '38': '家聚會', '39': '小排', '37': '主日' }
+    const map = { '2312': '家聚會出訪','38': '家聚會受訪','1473': '福音出訪','2026': '晨興','40': '禱告聚會','768': '兒童排', '39': '小排', '37': '主日', '2483': '生命讀經' }
     return map[type] || '聚會'
 }
 </script>

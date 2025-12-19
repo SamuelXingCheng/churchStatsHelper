@@ -95,8 +95,8 @@ safe_define("TITLE", getEnvValue('TITLE', ""));
 // error_log("GROUP: ".GROUP);
 
 // 聚會 ID (優先讀取 .env，沒有就用硬編碼)
-safe_define('go_home_MEETING', getEnvValue('MEETING_GO_HOME', '38'));
-safe_define('home_MEETING', getEnvValue('MEETING_HOME', '2312'));
+safe_define('go_home_MEETING', getEnvValue('MEETING_GO_HOME', '2312'));
+safe_define('home_MEETING', getEnvValue('MEETING_HOME', '38'));
 safe_define('smallGroup', getEnvValue('MEETING_SMALL_GROUP', '39'));
 safe_define('Gospel', getEnvValue('MEETING_GOSPEL', '1473'));
 safe_define('Revival', getEnvValue('MEETING_REVIVAL', '2026'));

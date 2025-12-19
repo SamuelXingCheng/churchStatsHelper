@@ -530,48 +530,61 @@ class AttendanceService {
         return ["status" => "success", "date" => $sundayDate, "members" => $members];
     }
 
-    // 對應: attendance_submit.php
     private function attendanceSubmit() {
         $meetingType = $_POST['meeting_type'] ?? null;
         $memberIds   = $_POST['member_ids'] ?? [];
-        $attend      = $_POST['attend'] ?? 1;          // ★ 補回這行
-        $inputDate   = $_POST['date'] ?? date("Y-m-d"); // ★ 補回這行
-
-        // 2. 處理 member_ids 格式 (修復 array_merge 錯誤)
+        $attend      = $_POST['attend'] ?? 1;
+        $inputDate   = $_POST['date'] ?? date("Y-m-d");
+    
+        // 1. 記錄初始輸入 (Log)
+        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate, Attend: $attend");
+    
+        // 2. 處理 member_ids 格式
         if (is_string($memberIds)) {
-            // 如果是字串 "123,456"，就轉成陣列 [123, 456]
             $memberIds = array_filter(explode(',', $memberIds));
         }
-        // 確保是純數字陣列，避免 SQL 注入
         $memberIds = array_map('intval', (array)$memberIds);
-
-        if (!$meetingType || empty($memberIds)) throw new Exception("缺少參數");
-
+        
+        // 記錄解析後的 IDs (Log)
+        error_log("[Attendance] 解析後的 MemberIDs: " . json_encode($memberIds));
+    
+        if (!$meetingType || empty($memberIds)) {
+            error_log("[Attendance] 錯誤: 缺少參數 (Type 或 IDs 為空)");
+            throw new Exception("缺少參數");
+        }
+    
         $dateObj = new DateTime($inputDate);
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $date = $dateObj->format('Y-m-d');
         $year = (int)$dateObj->format("o");
         $week = (int)$dateObj->format("W");
-
+    
         // Step 1: 寫入本地 DB
-        foreach ($memberIds as $id) {
-            $sql = "INSERT INTO attendance_records 
-                    (member_id, item_id, date, year, week, status, district_id, created_at, synced) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 0)
-                    ON DUPLICATE KEY UPDATE 
-                    status=VALUES(status), synced=0, updated_at=NOW()";
-            $this->conn->prepare($sql)->execute([
-                $id, $meetingType, $date, $year, $week, $attend, CHURCHID
-            ]);
+        try {
+            foreach ($memberIds as $id) {
+                $sql = "INSERT INTO attendance_records 
+                        (member_id, item_id, date, year, week, status, district_id, created_at, synced) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 0)
+                        ON DUPLICATE KEY UPDATE 
+                        status=VALUES(status), synced=0, updated_at=NOW()";
+                $this->conn->prepare($sql)->execute([
+                    $id, $meetingType, $date, $year, $week, $attend, CHURCHID
+                ]);
+            }
+            error_log("[Attendance] 本地 DB 寫入完成 (共 " . count($memberIds) . " 筆)");
+        } catch (Exception $e) {
+            error_log("[Attendance] 本地 DB 寫入失敗: " . $e->getMessage());
+            return ["status" => "error", "message" => "本地資料庫寫入失敗"];
         }
-
-        // Step 2: 呼叫中央 API (使用 Cookie)
+    
+        // Step 2: 呼叫中央 API
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
-             return ["status" => "pending", "message" => "已存本地，但中央未登入，無法同步"];
+            error_log("[Attendance] 警告: 找不到 Cookie 檔案 ($cookieFile)，無法同步中央");
+            return ["status" => "pending", "message" => "已存本地，但中央未登入，無法同步"];
         }
-
+    
         $postData = [
             'meeting' => $meetingType,
             'year'    => $year,
@@ -579,10 +592,12 @@ class AttendanceService {
             'attend'  => $attend,
             'member_ids' => $memberIds
         ];
-
+    
         $postString = http_build_query($postData);
         $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
         
+        error_log("[Attendance] 準備呼叫中央 API: $url");
+    
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $postString);
@@ -593,8 +608,9 @@ class AttendanceService {
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
         curl_close($ch);
-
+    
         if ($httpCode == 200) {
             // 更新本地 synced=1
             $placeholders = implode(',', array_fill(0, count($memberIds), '?'));
@@ -602,9 +618,11 @@ class AttendanceService {
                           WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
             $params = array_merge($memberIds, [$meetingType, $date]);
             $this->conn->prepare($updateSql)->execute($params);
-
+    
+            error_log("[Attendance] 中央同步成功 (HTTP 200)");
             return ["status" => "success", "message" => "點名成功，中央已同步"];
         } else {
+            error_log("[Attendance] 中央同步失敗! HTTP Code: $httpCode, Curl Error: $curlError, Response: $response");
             return ["status" => "pending", "message" => "中央同步失敗，HTTP $httpCode"];
         }
     }

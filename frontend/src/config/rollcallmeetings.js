@@ -1,6 +1,6 @@
 export const MEETINGS = {
-    GO_HOME: "38",        // 家聚會出訪
-    HOME: "2312",         // 家聚會受訪
+    GO_HOME: "2312",        // 家聚會出訪
+    HOME: "38",         // 家聚會受訪
     SMALL_GROUP: "39",    // 排聚會
     GOSPEL: "1473",       // 福音出訪
     REVIVAL: "2026",      // 晨興
