@@ -221,20 +221,23 @@ async function loadMembers() {
     const res = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     members.value = res || []
     
-    // 智慧預選：若本週尚未有點名紀錄 (status 為 null 或 0)，則自動勾選「上週有來」的人
-    // 若 status === 1，代表資料庫已有紀錄，就只顯示已紀錄的
+    // 先計算出「目前小區看得到的人」
+    const visibleIds = filteredMembers.value.map(m => m.member_id)
+
     const hasCurrentRecords = members.value.some(m => m.status === 1 || m.status === 0)
 
     if (hasCurrentRecords) {
+      // 只挑選「看得到」且「已出席」的人
       selectedIds.value = members.value
-        .filter(m => m.status === 1)
+        .filter(m => m.status === 1 && visibleIds.includes(m.member_id))
         .map(m => m.member_id)
     } else {
+      // 只挑選「看得到」且「上週有來」的人
       selectedIds.value = members.value
-        .filter(m => m.last_week_status === 1)
+        .filter(m => m.last_week_status === 1 && visibleIds.includes(m.member_id))
         .map(m => m.member_id)
     }
-      
+    // 這樣 Total 就會從 0 或小區人數開始，取消勾選也會歸 0
   } catch (e) {
     console.error(e)
     alert("載入名單失敗")
@@ -351,7 +354,8 @@ async function confirmSubmit() {
     submitting.value = true
     try {
       const res = await submitAttendance({
-        district: props.userProfile.main_district,
+        // ★ 傳入小區名稱，這會解決您看到的「基底數字」問題
+        sub_district: props.userProfile.sub_district, 
         meeting_type: meetingType.value,
         member_ids: selectedIds.value,
         date: date.value
@@ -385,7 +389,6 @@ async function performSync(isManual = false) {
   
   try {
     // Step A: 叫後端去爬中央網站 (Update Local DB from Central)
-    // 傳入 userProfile.main_district (例如 'T4')
     if (props.userProfile?.sub_district) {
       await triggerCentralSync(props.userProfile.sub_district)
     }

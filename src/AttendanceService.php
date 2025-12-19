@@ -483,16 +483,18 @@ class AttendanceService {
     // ==========================================
     //  Attendance Submit Logic (Soft Delete / Update to NULL)
     // ==========================================
+    // ==========================================
+    //  Attendance Submit Logic (具備區域範圍意識的差異同步)
+    // ==========================================
     private function attendanceSubmit() {
         $meetingType = $_POST['meeting_type'] ?? null;
         $memberIds   = $_POST['member_ids'] ?? [];
-        $attend      = $_POST['attend'] ?? 1;
         $inputDate   = $_POST['date'] ?? date("Y-m-d");
+        // ★ 新增：接收前端傳來的小區名稱，用來鎖定同步範圍
+        $subDistrict = $_POST['sub_district'] ?? null; 
     
-        // 1. Log
-        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate");
+        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate, Scope: $subDistrict");
     
-        // 2. 處理 member_ids 格式
         if (is_string($memberIds)) {
             $memberIds = array_filter(explode(',', $memberIds));
         }
@@ -502,29 +504,53 @@ class AttendanceService {
             throw new Exception("缺少參數: meeting_type");
         }
     
-        // 3. 計算日期定位
+        // 計算日期定位
         $dateObj = new DateTime($inputDate);
         $dateObj->modify('Monday this week');
         $dateObj->modify('+6 days');
         $date = $dateObj->format('Y-m-d');
         $year = (int)$dateObj->format("o");
         $week = (int)$dateObj->format("W");
+
+        // ★ 新增：根據 sub_district 找出對應的 region_id (小區編號)
+        $targetRegionId = null;
+        if ($subDistrict && defined('DISTRICT_ID')) {
+            $districtMap = DISTRICT_ID;
+            $val = $districtMap[$subDistrict] ?? null;
+            if ($val) {
+                $parts = explode(',', $val);
+                $targetRegionId = isset($parts[0]) ? intval($parts[0]) : null;
+            }
+        }
     
         // =========================================================
-        // Step A: 找出「被取消」的人 (Diff Check)
+        // Step A: 找出「該小區範圍內」被取消的人 (Diff Check)
         // =========================================================
+        $existingIds = [];
         $cancelledIds = [];
         try {
-            // 找出原本狀態為 1 的人
+            // ★ 修改：SQL 加上 region_id 過濾，只抓出「屬於我這區」且原本狀態為 1 的人
             $sqlCheck = "SELECT member_id FROM attendance_records 
                          WHERE date = ? AND item_id = ? AND status = 1";
+            $paramsCheck = [$date, $meetingType];
+
+            if ($targetRegionId) {
+                $sqlCheck .= " AND region_id = ?";
+                $paramsCheck[] = $targetRegionId;
+            }
+
             $stmtCheck = $this->conn->prepare($sqlCheck);
-            $stmtCheck->execute([$date, $meetingType]);
+            $stmtCheck->execute($paramsCheck);
             $existingIds = $stmtCheck->fetchAll(PDO::FETCH_COLUMN, 0); 
             $existingIds = array_map('intval', $existingIds);
 
-            // 計算差集
+            // 計算差集：
+            // cancelledIds: 原本有來，但這次名單沒出現的 (在小區範圍內)
             $cancelledIds = array_diff($existingIds, $newMemberIds);
+            
+            // addedIds: 這次名單有出現，但原本資料庫沒紀錄的 (新點名的人)
+            $addedIds = array_diff($newMemberIds, $existingIds);
+
         } catch (Exception $e) {
             error_log("[Attendance] 讀取舊名單失敗: " . $e->getMessage());
         }
@@ -538,7 +564,6 @@ class AttendanceService {
             }
 
             // 1. 執行「取消」 (UPDATE status = NULL)
-            // 這部分邏輯不變，只更新 status，不會動到 group_id/region_id
             if (!empty($cancelledIds)) {
                 $placeholders = implode(',', array_fill(0, count($cancelledIds), '?'));
                 $sqlUpdate = "UPDATE attendance_records 
@@ -549,50 +574,33 @@ class AttendanceService {
                 $this->conn->prepare($sqlUpdate)->execute($params);
             }
 
-            // 2. 執行「新增/出席」 (INSERT with Full Details)
+            // 2. 執行「新增/出席」
             if (!empty($newMemberIds)) {
-                
-                // ★ 新增步驟：先去 members 表查出這些人的詳細資料 (group_id, region_id, category)
+                // 先查詢成員詳細資料以供寫入
                 $placeholders = implode(',', array_fill(0, count($newMemberIds), '?'));
                 $sqlDetails = "SELECT member_id, group_id, region_id, category 
                                FROM members WHERE member_id IN ($placeholders)";
                 $stmtDetails = $this->conn->prepare($sqlDetails);
                 $stmtDetails->execute($newMemberIds);
                 
-                // 將結果轉為以 member_id 為 Key 的陣列，方便查找
                 $memberInfos = [];
                 while ($row = $stmtDetails->fetch(PDO::FETCH_ASSOC)) {
                     $memberInfos[$row['member_id']] = $row;
                 }
 
-                // ★ 修改 SQL：加入 group_id, region_id, category 欄位
                 $sqlInsert = "INSERT INTO attendance_records 
                               (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at, synced) 
                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 0)
                               ON DUPLICATE KEY UPDATE 
                               status = 1, synced = 0, updated_at = NOW()"; 
-                              // 注意：Duplicate 時我們通常只更新 status，不一定要更新 group_id，除非你想確保資料永遠最新
 
                 $stmtInsert = $this->conn->prepare($sqlInsert);
 
                 foreach ($newMemberIds as $id) {
-                    // 從剛剛查到的資料中取出對應值
                     $info = $memberInfos[$id] ?? [];
-                    $groupId  = $info['group_id'] ?? null;
-                    $regionId = $info['region_id'] ?? null;
-                    $category = $info['category'] ?? null;
-
                     $stmtInsert->execute([
-                        $id, 
-                        $meetingType, 
-                        $date, 
-                        $year, 
-                        $week, 
-                        1, 
-                        CHURCHID, 
-                        $groupId,  // 補上 group_id
-                        $regionId, // 補上 region_id
-                        $category  // 補上 category
+                        $id, $meetingType, $date, $year, $week, 1, CHURCHID, 
+                        $info['group_id'] ?? null, $info['region_id'] ?? null, $info['category'] ?? null
                     ]);
                 }
             }
@@ -602,62 +610,51 @@ class AttendanceService {
             }
 
         } catch (Exception $e) {
-            if (method_exists($this->conn, 'rollBack')) {
-                $this->conn->rollBack();
-            }
-            error_log("[Attendance] 本地 DB 寫入失敗: " . $e->getMessage());
-            return ["status" => "error", "message" => "本地資料庫寫入失敗"];
+            if (method_exists($this->conn, 'rollBack')) { $this->conn->rollBack(); }
+            return ["status" => "error", "message" => "本地寫入失敗"];
         }
     
         // =========================================================
-        // Step C: 中央同步 (邏輯不變)
+        // Step C: 中央同步 (精準差異同步)
         // =========================================================
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
-            return ["status" => "success", "message" => "已存本地 (Full Info)，但中央未連線"];
+            return ["status" => "success", "message" => "已存本地，但中央未連線"];
         }
 
         $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
         $syncErrors = 0;
 
-        $addedIds = array_diff($newMemberIds, $existingIds);
-
-        // 同步 1: 出席 (Status = 1)
-        if (!empty($addedIds)) { // <--- 這裡改成檢查 addedIds
+        // 同步 1: 真正新增的人 (attend = 1)
+        if (!empty($addedIds)) {
             $postData = [
-                'meeting'    => $meetingType,
-                'year'       => $year,
-                'week'       => $week,
-                'attend'     => 1, 
-                'member_ids' => array_values($addedIds) // <--- 這裡只送出真正新增的人
+                'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 1, 
+                'member_ids' => array_values($addedIds)
             ];
             if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
         }
 
-        // 同步 2: 取消 (Status = 0)
+        // 同步 2: 真正取消的人 (attend = 0)
         if (!empty($cancelledIds)) {
             $postData = [
-                'meeting'    => $meetingType,
-                'year'       => $year,
-                'week'       => $week,
-                'attend'     => 0, 
+                'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 0, 
                 'member_ids' => array_values($cancelledIds) 
             ];
             if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
         }
 
         if ($syncErrors === 0) {
-            $allProcessedIds = array_merge($newMemberIds, $cancelledIds);
+            // 更新同步標記 (僅針對本次處理的 ID)
+            $allProcessedIds = array_merge($newMemberIds, array_values($cancelledIds));
             if (!empty($allProcessedIds)) {
                 $placeholders = implode(',', array_fill(0, count($allProcessedIds), '?'));
                 $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW() 
                               WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
                 $this->conn->prepare($updateSql)->execute(array_merge($allProcessedIds, [$meetingType, $date]));
             }
-            return ["status" => "success", "message" => "點名成功，中央已完整同步"];
-        } else {
-            return ["status" => "pending", "message" => "本地已更新，但中央同步部分失敗"];
+            return ["status" => "success", "message" => "同步完成，範圍：$subDistrict"];
         }
+        return ["status" => "pending", "message" => "部分同步失敗"];
     }
     // 輔助函式：發送 curl 請求
     private function sendToCentral($url, $postData, $cookieFile) {

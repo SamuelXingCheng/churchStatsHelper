@@ -24,9 +24,10 @@ export async function submitAttendance(data) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      district: data.district,
+      // ★ 將 Key 改為 sub_district，值傳入小區名稱 (例如 'T4-1')
+      sub_district: data.sub_district, 
       meeting_type: data.meeting_type,
-      member_ids: data.member_ids, // 注意：這裡可能需要 JSON.stringify 或 array處理，視後端接收方式
+      member_ids: data.member_ids, 
       attend: 1,
       date: data.date
     })
