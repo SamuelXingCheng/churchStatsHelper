@@ -613,14 +613,16 @@ class AttendanceService {
         $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
         $syncErrors = 0;
 
+        $addedIds = array_diff($newMemberIds, $existingIds);
+
         // 同步 1: 出席 (Status = 1)
-        if (!empty($newMemberIds)) {
+        if (!empty($addedIds)) { // <--- 這裡改成檢查 addedIds
             $postData = [
                 'meeting'    => $meetingType,
                 'year'       => $year,
                 'week'       => $week,
                 'attend'     => 1, 
-                'member_ids' => $newMemberIds
+                'member_ids' => array_values($addedIds) // <--- 這裡只送出真正新增的人
             ];
             if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
         }
