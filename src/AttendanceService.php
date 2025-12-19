@@ -334,13 +334,18 @@ class AttendanceService {
         $district = $_GET['district'] ?? ''; 
         $search   = $_GET['search']   ?? '';
 
+        // [修改 1] 接收前端傳來的 date 參數，如果沒傳才用今天
+        $dateInput = $_GET['date'] ?? date("Y-m-d");
+
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
             throw new Exception("Cookie 不存在，請先執行登入");
         }
     
-        $year = date("Y");
-        $week = date("W");
+        // [修改 2] 根據該日期計算 Year / Week (使用 ISO-8601 標準 'o' 與 'W')
+        $ts = strtotime($dateInput);
+        $year = date("o", $ts); 
+        $week = date("W", $ts);
     
         $districtMap = (defined('DISTRICT_ID') ? DISTRICT_ID : []);
         $configValue = $districtMap[$district] ?? ''; 
@@ -349,6 +354,7 @@ class AttendanceService {
             throw new Exception("找不到對應的大區 ID 設定");
         }
     
+        // 網址參數使用計算出來的 $year 和 $week
         $url = CENTRAL_BASE_URL . "/list_members.php"
              . "?start=0&limit=2000&year=$year&week=$week" 
              . "&sex=&member_status=&status=&role="        
@@ -385,7 +391,8 @@ class AttendanceService {
         }
     
         $sync = new CentralSyncService();
-        $sync->syncMembersAndAttendance($district, $data);
+        // [修改 3] 將計算好的 $year 和 $week 傳入，確保寫入資料庫的日期正確
+        $sync->syncMembersAndAttendance($district, $data, $year, $week);
     
         return $data;
     }

@@ -10,6 +10,14 @@ export async function fetchMembers(meetingType, date, benchmarkMode = 'self') {
   return json.members
 }
 
+export async function triggerCentralSync(district, date) {
+  // 如果沒有 date，後端會預設用今天，但最好還是傳過去
+  const dateParam = date ? `&date=${date}` : '';
+  const url = `${API_BASE}?path=central-members&district=${district}${dateParam}`;
+  const res = await fetch(url);
+  return await res.json();
+}
+
 export async function submitAttendance(data) {
   const url = `${API_BASE}?path=attendance-submit`
   const res = await fetch(url, {

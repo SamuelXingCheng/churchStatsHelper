@@ -74,9 +74,32 @@
         </div>
         <span class="text-xs text-gray-400 font-medium group-hover:text-gray-200 transition">全選本頁</span>
       </label>
-      <div class="text-[10px] text-blue-300 bg-[#0f172a] px-3 py-1 rounded-full border border-blue-500/20">
-        已選 <span class="font-bold text-white text-xs ml-0.5">{{ selectedIds.length }}</span> 人
+
+      <div class="flex items-center space-x-3">
+        
+        <button 
+          @click="handleManualSync" 
+          :disabled="isSyncing"
+          class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all active:scale-95 border"
+          :class="isSyncing 
+            ? 'bg-gray-800 text-gray-400 border-gray-700 cursor-wait' 
+            : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/20'"
+        >
+          <svg v-if="isSyncing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <span>{{ isSyncing ? '同步中' : '同步' }}</span>
+        </button>
+
+        <div class="text-[10px] text-blue-300 bg-[#0f172a] px-3 py-1 rounded-full border border-blue-500/20">
+          已選 <span class="font-bold text-white text-xs ml-0.5">{{ selectedIds.length }}</span> 人
+        </div>
       </div>
+
     </div>
 
     <div class="bg-[#0f172a]/50 rounded-3xl p-3 border border-white/5 min-h-[200px] shadow-inner space-y-6">
@@ -166,10 +189,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import RollcallFilterBar from '../components/RollcallFilterBar.vue'
 import MemberCard from '../components/MemberCard.vue' 
-import { fetchMembers, submitAttendance } from '../api/rollcall.js'
+import { fetchMembers, submitAttendance, triggerCentralSync } from '../api/rollcall.js'
 
 const props = defineProps({
   userProfile: Object,
@@ -187,6 +210,9 @@ const selectedIds = ref([])
 const loadingMembers = ref(false)
 const submitting = ref(false)
 const useSundayBenchmark = ref(false) 
+const isSyncing = ref(false)
+const lastSyncTime = ref('')
+let pollingTimer = null // 用來存計時器 ID
 
 async function loadMembers() {
   loadingMembers.value = true
@@ -222,12 +248,29 @@ function toggleBenchmark() {
   loadMembers() 
 }
 
+// 當日期或聚會類型改變時，重置同步狀態並重新載入
 watch([meetingType, date], () => {
-  useSundayBenchmark.value = false 
-  loadMembers()
+  useSundayBenchmark.value = false
+  lastSyncTime.value = '' // 清空上次更新時間
+  loadMembers() // 這是切換聚會，所以應該是全量載入 (Overwrite)，不是 Merge
 })
 
-onMounted(loadMembers)
+onMounted(() => {
+  // 載入初始資料 (原本的邏輯)
+  loadMembers()
+
+
+  // 設定輪詢
+  pollingTimer = setInterval(() => {
+    console.log('[AutoSync] 執行背景同步...')
+    performSync(false) // false 代表背景執行，不轉圈圈
+  }, 120 * 1000) // 2分鐘
+})
+
+// 離開頁面時清除定時器
+onUnmounted(() => {
+  if (pollingTimer) clearInterval(pollingTimer)
+})
 
 // 1. 基礎篩選
 const filteredMembers = computed(() => {
@@ -332,4 +375,72 @@ function getMeetingName(type) {
     const map = { '2312': '家聚會出訪','38': '家聚會受訪','1473': '福音出訪','2026': '晨興','40': '禱告聚會','768': '兒童排', '39': '小排', '37': '主日', '2483': '生命讀經' }
     return map[type] || '聚會'
 }
+
+// 1. 執行同步 (包含 API 呼叫 + 智能合併)
+async function performSync(isManual = false) {
+  if (isSyncing.value) return
+  
+  // 如果是手動按的，顯示 Loading 轉圈圈；背景執行則不顯示
+  if (isManual) isSyncing.value = true
+  
+  try {
+    // Step A: 叫後端去爬中央網站 (Update Local DB from Central)
+    // 傳入 userProfile.main_district (例如 'T4')
+    if (props.userProfile?.sub_district) {
+      await triggerCentralSync(props.userProfile.sub_district)
+    }
+
+    // Step B: 讀取最新的本地資料 (Get Fresh Data)
+    const benchmarkMode = useSundayBenchmark.value ? 'sunday' : 'self'
+    const freshMembers = await fetchMembers(meetingType.value, date.value, benchmarkMode)
+    
+    // Step C: 智能合併 (Smart Merge Logic)
+    // 這裡不直接覆蓋 members.value，而是要比對 selectedIds
+    applySmartMerge(freshMembers)
+
+    // 更新顯示清單 (這會觸發畫面重繪)
+    members.value = freshMembers
+    
+    // 更新時間顯示
+    const now = new Date()
+    lastSyncTime.value = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`
+
+  } catch (e) {
+    console.error("同步失敗", e)
+    if (isManual) alert("同步失敗，請檢查網路")
+  } finally {
+    isSyncing.value = false
+  }
+}
+
+// 2. 智能合併演算法 (聯集邏輯)
+function applySmartMerge(freshMembers) {
+  if (!freshMembers || freshMembers.length === 0) return
+
+  // 找出「最新資料中，已經是出席狀態 (status=1)」的人
+  const remoteAttendedIds = freshMembers
+    .filter(m => m.status === 1)
+    .map(m => m.member_id)
+
+  // 執行聯集 (Union)：目前勾選的 + 遠端已出席的
+  // Set 會自動去除重複
+  const mergedSet = new Set([...selectedIds.value, ...remoteAttendedIds])
+  
+  // 算出「因為這次同步而新增」的數量 (僅為了 UX 提示，可選)
+  const addedCount = mergedSet.size - selectedIds.value.length
+  
+  // 更新勾選狀態
+  selectedIds.value = Array.from(mergedSet)
+  
+  // UX 反饋 (僅手動同步時提示)
+  if (addedCount > 0 && isSyncing.value) {
+    console.log(`同步完成：新增了 ${addedCount} 位聖徒`)
+  }
+}
+
+// 3. 手動同步入口
+function handleManualSync() {
+  performSync(true)
+}
+
 </script>
