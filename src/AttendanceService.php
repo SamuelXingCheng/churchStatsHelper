@@ -92,11 +92,7 @@ class AttendanceService {
             throw new Exception("大區和小區為必填欄位");
         }
 
-        $sqlOld = "SELECT sub_district FROM user_profiles WHERE line_user_id = ?";
-        $stmtOld = $this->conn->prepare($sqlOld);
-        $stmtOld->execute([$lineUserId]);
-        $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
-
+        // 1. 直接更新資料庫 (不再先查詢舊資料比對，節省一次 SQL)
         $sql = "UPDATE user_profiles SET 
                 main_district = ?, 
                 sub_district = ?, 
@@ -110,21 +106,15 @@ class AttendanceService {
 
         if (!$success) throw new Exception("個人檔案更新失敗");
 
-        $oldSub = isset($old['sub_district']) ? trim($old['sub_district']) : '';
-        $isSubDistrictChanged = ($oldSub !== $subDistrict);
-        $runSync = false;
-
-        if ($isSubDistrictChanged) {
-            // ★★★ 修改重點：接收回傳值，而不是直接設為 true ★★★
-            // syncSmallDistrictData 會在沒 Cookie 時回傳 false
-            $runSync = $this->syncSmallDistrictData($subDistrict);
-        }
+        // 2. ★ 關鍵修改：移除自動同步邏輯
+        // 不再呼叫 syncSmallDistrictData，確保 API 能在 0.1 秒內回傳。
+        // 如果該小區是第一次使用 (本地沒資料)，使用者會在列表頁看到空白，
+        // 此時他們可以點擊前端的「手動同步」按鈕來抓取資料。
 
         return [
             "status" => "success", 
-            // 訊息也可以順便動態調整，讓前端知道發生什麼事
-            "message" => $runSync ? "小區名單已更新" : "設定已儲存",
-            "synced" => $runSync // 這樣前端就能拿到 false 了
+            "message" => "設定已儲存",
+            "synced" => false // 明確告訴前端這次沒有執行同步
         ];
     }
 
