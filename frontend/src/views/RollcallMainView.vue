@@ -258,6 +258,14 @@ watch([meetingType, date], () => {
   loadMembers() // 這是切換聚會，所以應該是全量載入 (Overwrite)，不是 Merge
 })
 
+// 監聽登入狀態：一旦偵測到登入成功 (false -> true)，自動執行同步抓資料
+watch(() => props.loginSuccess, (newVal) => {
+  if (newVal === true) {
+    console.log("偵測到登入成功，執行初次自動同步...");
+    performSync(true); // 呼叫同步函式 (帶 true 顯示 loading 讓使用者知道正在跑)
+  }
+})
+
 onMounted(() => {
   // 載入初始資料 (原本的邏輯)
   loadMembers()
