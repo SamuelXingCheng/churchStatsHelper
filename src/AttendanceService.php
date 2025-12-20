@@ -115,14 +115,16 @@ class AttendanceService {
         $runSync = false;
 
         if ($isSubDistrictChanged) {
-            $this->syncSmallDistrictData($subDistrict);
-            $runSync = true;
+            // ★★★ 修改重點：接收回傳值，而不是直接設為 true ★★★
+            // syncSmallDistrictData 會在沒 Cookie 時回傳 false
+            $runSync = $this->syncSmallDistrictData($subDistrict);
         }
 
         return [
             "status" => "success", 
+            // 訊息也可以順便動態調整，讓前端知道發生什麼事
             "message" => $runSync ? "小區名單已更新" : "設定已儲存",
-            "synced" => $runSync
+            "synced" => $runSync // 這樣前端就能拿到 false 了
         ];
     }
 

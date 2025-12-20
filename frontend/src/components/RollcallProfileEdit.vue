@@ -198,13 +198,24 @@ async function handleSubmit() {
       ...form
     }
     
-    // 呼叫 API
     const res = await syncUserProfile(payload)
     
     if (res.status === 'success') {
+      
+      // ★★★ 修正點：偵測是否同步失敗 ★★★
+      // 如果需要同步 (needsSync=true) 但後端回傳沒同步 (synced=false)，代表沒登入
+      if (needsSync.value && res.synced === false) {
+        alert(
+          "✅ 設定已儲存！\n\n" +
+          "⚠️ 注意：因尚未連線中央系統，無法自動下載小區名單。\n" +
+          "請關閉此視窗後，點擊首頁上方的「立即連線」按鈕，名單才會出現喔！"
+        )
+      }
+
       setTimeout(() => {
         emit('saved', form)
       }, 500)
+
     } else {
       alert('儲存失敗：' + res.message)
       isSubmitting.value = false
