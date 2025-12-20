@@ -23,6 +23,22 @@ class LineService {
     }
 
     /**
+     * 主動推播 Flex 訊息 (Push API)
+     */
+    public function pushFlexMessage($to, $altText, $contents) {
+        if (empty($to)) return;
+
+        $this->sendMessage('push', [
+            'to' => $to,
+            'messages' => [[
+                'type' => 'flex',
+                'altText' => $altText,
+                'contents' => $contents
+            ]]
+        ]);
+    }
+    
+    /**
      * 主動推播 (Push API) - Runner 使用
      */
     public function pushMessage($to, $text) {

@@ -221,23 +221,22 @@ async function loadMembers() {
     const res = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     members.value = res || []
     
-    // 先計算出「目前小區看得到的人」
+    // 計算目前小區看得到的人 (避免勾選到篩選外的人)
     const visibleIds = filteredMembers.value.map(m => m.member_id)
 
+    // 檢查資料庫是否已有本週紀錄 (status 為 1 或 0 都算有紀錄)
     const hasCurrentRecords = members.value.some(m => m.status === 1 || m.status === 0)
 
     if (hasCurrentRecords) {
-      // 只挑選「看得到」且「已出席」的人
+      // 情況 A：資料庫已有紀錄 -> 顯示資料庫中「已出席 (status=1)」的人
       selectedIds.value = members.value
         .filter(m => m.status === 1 && visibleIds.includes(m.member_id))
         .map(m => m.member_id)
     } else {
-      // 只挑選「看得到」且「上週有來」的人
-      selectedIds.value = members.value
-        .filter(m => m.last_week_status === 1 && visibleIds.includes(m.member_id))
-        .map(m => m.member_id)
+      // 情況 B：資料庫無紀錄 (新的一週) -> ★ 修改處：不進行預選，保持空白
+      selectedIds.value = []
     }
-    // 這樣 Total 就會從 0 或小區人數開始，取消勾選也會歸 0
+    
   } catch (e) {
     console.error(e)
     alert("載入名單失敗")
