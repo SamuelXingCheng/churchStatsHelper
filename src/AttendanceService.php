@@ -475,18 +475,17 @@ class AttendanceService {
     // ==========================================
     //  Attendance Submit Logic (Soft Delete / Update to NULL)
     // ==========================================
-    // ==========================================
-    //  Attendance Submit Logic (具備區域範圍意識的差異同步)
-    // ==========================================
     private function attendanceSubmit() {
         $meetingType = $_POST['meeting_type'] ?? null;
         $memberIds   = $_POST['member_ids'] ?? [];
         $inputDate   = $_POST['date'] ?? date("Y-m-d");
-        // ★ 新增：接收前端傳來的小區名稱，用來鎖定同步範圍
-        $subDistrict = $_POST['sub_district'] ?? null; 
-    
-        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate, Scope: $subDistrict");
-    
+        
+        // ★ 1. 接收範圍參數
+        $subDistrict   = $_POST['sub_district'] ?? null; 
+        $customGroupId = $_POST['custom_group_id'] ?? null; // 新增：自訂名單 ID
+
+        error_log("[Attendance] 開始處理點名 - Type: $meetingType, Date: $inputDate, Sub: $subDistrict, Group: $customGroupId");
+
         if (is_string($memberIds)) {
             $memberIds = array_filter(explode(',', $memberIds));
         }
@@ -495,7 +494,7 @@ class AttendanceService {
         if (!$meetingType) {
             throw new Exception("缺少參數: meeting_type");
         }
-    
+
         // 計算日期定位
         $dateObj = new DateTime($inputDate);
         $dateObj->modify('Monday this week');
@@ -504,7 +503,7 @@ class AttendanceService {
         $year = (int)$dateObj->format("o");
         $week = (int)$dateObj->format("W");
 
-        // ★ 新增：根據 sub_district 找出對應的 region_id (小區編號)
+        // 解析小區 ID (Region ID)
         $targetRegionId = null;
         if ($subDistrict && defined('DISTRICT_ID')) {
             $districtMap = DISTRICT_ID;
@@ -514,33 +513,59 @@ class AttendanceService {
                 $targetRegionId = isset($parts[0]) ? intval($parts[0]) : null;
             }
         }
-    
+
         // =========================================================
-        // Step A: 找出「該小區範圍內」被取消的人 (Diff Check)
+        // Step A: 找出「範圍內」被取消的人 (Diff Check)
         // =========================================================
         $existingIds = [];
         $cancelledIds = [];
+        $addedIds = [];
+
         try {
-            // ★ 修改：SQL 加上 region_id 過濾，只抓出「屬於我這區」且原本狀態為 1 的人
             $sqlCheck = "SELECT member_id FROM attendance_records 
                          WHERE date = ? AND item_id = ? AND status = 1";
             $paramsCheck = [$date, $meetingType];
+            
+            // ★ 2. 關鍵修改：嚴格的範圍鎖定邏輯
+            $scopeFound = false; // 用來標記是否找到合法的「刪除範圍」
 
-            if ($targetRegionId) {
+            if ($customGroupId) {
+                // 【情境 A】自訂名單模式
+                // 只檢查「原本就在這個自訂名單內」的人
+                // 這樣計算差集時，只會算出「這個名單裡缺席的人」，不會波及全教會
+                $sqlCheck .= " AND member_id IN (SELECT member_id FROM custom_group_members WHERE group_id = ?)";
+                $paramsCheck[] = $customGroupId;
+                $scopeFound = true;
+
+            } elseif ($targetRegionId) {
+                // 【情境 B】小區模式
+                // 維持原有邏輯，只鎖定該小區
                 $sqlCheck .= " AND region_id = ?";
                 $paramsCheck[] = $targetRegionId;
+                $scopeFound = true;
             }
 
-            $stmtCheck = $this->conn->prepare($sqlCheck);
-            $stmtCheck->execute($paramsCheck);
-            $existingIds = $stmtCheck->fetchAll(PDO::FETCH_COLUMN, 0); 
-            $existingIds = array_map('intval', $existingIds);
+            // ★ 3. 安全防護：只有在「有明確範圍」時才去撈舊資料
+            if ($scopeFound) {
+                $stmtCheck = $this->conn->prepare($sqlCheck);
+                $stmtCheck->execute($paramsCheck);
+                $existingIds = $stmtCheck->fetchAll(PDO::FETCH_COLUMN, 0); 
+                $existingIds = array_map('intval', $existingIds);
+            } else {
+                // 【情境 C】無範圍模式 (安全防護)
+                // 如果前端沒傳小區也沒傳名單 ID，我們強制假設 existingIds 為空。
+                // 結果：$cancelledIds = [] (沒有人會被刪除)
+                // 結果：$addedIds = 所有上傳的人 (變成「只增不減」的安全模式)
+                error_log("[Attendance] 警告：未指定範圍，啟動安全模式 (不執行刪除)");
+                $existingIds = [];
+            }
 
             // 計算差集：
-            // cancelledIds: 原本有來，但這次名單沒出現的 (在小區範圍內)
+            // cancelledIds: 原本有來($existingIds) 但 這次沒出現($newMemberIds) 的人
+            // 由於上面有範圍鎖定，$existingIds 只會包含「範圍內」的人，所以這裡的刪除也是安全的。
             $cancelledIds = array_diff($existingIds, $newMemberIds);
             
-            // addedIds: 這次名單有出現，但原本資料庫沒紀錄的 (新點名的人)
+            // addedIds: 這次新勾選的人
             $addedIds = array_diff($newMemberIds, $existingIds);
 
         } catch (Exception $e) {
@@ -548,14 +573,14 @@ class AttendanceService {
         }
 
         // =========================================================
-        // Step B: 本地資料庫更新
+        // Step B: 本地資料庫更新 (這裡邏輯不變)
         // =========================================================
         try {
             if (method_exists($this->conn, 'beginTransaction')) {
                 $this->conn->beginTransaction();
             }
 
-            // 1. 執行「取消」 (UPDATE status = NULL)
+            // 1. 執行「取消」
             if (!empty($cancelledIds)) {
                 $placeholders = implode(',', array_fill(0, count($cancelledIds), '?'));
                 $sqlUpdate = "UPDATE attendance_records 
@@ -566,9 +591,8 @@ class AttendanceService {
                 $this->conn->prepare($sqlUpdate)->execute($params);
             }
 
-            // 2. 執行「新增/出席」
+            // 2. 執行「新增」
             if (!empty($newMemberIds)) {
-                // 先查詢成員詳細資料以供寫入
                 $placeholders = implode(',', array_fill(0, count($newMemberIds), '?'));
                 $sqlDetails = "SELECT member_id, group_id, region_id, category 
                                FROM members WHERE member_id IN ($placeholders)";
@@ -605,9 +629,9 @@ class AttendanceService {
             if (method_exists($this->conn, 'rollBack')) { $this->conn->rollBack(); }
             return ["status" => "error", "message" => "本地寫入失敗"];
         }
-    
+
         // =========================================================
-        // Step C: 中央同步 (精準差異同步)
+        // Step C: 中央同步 (邏輯維持不變)
         // =========================================================
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
@@ -617,7 +641,6 @@ class AttendanceService {
         $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
         $syncErrors = 0;
 
-        // 同步 1: 真正新增的人 (attend = 1)
         if (!empty($addedIds)) {
             $postData = [
                 'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 1, 
@@ -626,7 +649,6 @@ class AttendanceService {
             if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
         }
 
-        // 同步 2: 真正取消的人 (attend = 0)
         if (!empty($cancelledIds)) {
             $postData = [
                 'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 0, 
@@ -636,7 +658,6 @@ class AttendanceService {
         }
 
         if ($syncErrors === 0) {
-            // 更新同步標記 (僅針對本次處理的 ID)
             $allProcessedIds = array_merge($newMemberIds, array_values($cancelledIds));
             if (!empty($allProcessedIds)) {
                 $placeholders = implode(',', array_fill(0, count($allProcessedIds), '?'));
@@ -644,10 +665,13 @@ class AttendanceService {
                               WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
                 $this->conn->prepare($updateSql)->execute(array_merge($allProcessedIds, [$meetingType, $date]));
             }
-            return ["status" => "success", "message" => "同步完成，範圍：$subDistrict"];
+            // 回傳訊息稍微調整，讓前端知道是用什麼模式同步的
+            $scopeMsg = $customGroupId ? "名單ID:$customGroupId" : ($subDistrict ? "小區:$subDistrict" : "無範圍(安全模式)");
+            return ["status" => "success", "message" => "同步完成，範圍：$scopeMsg"];
         }
         return ["status" => "pending", "message" => "部分同步失敗"];
     }
+
     // 輔助函式：發送 curl 請求
     private function sendToCentral($url, $postData, $cookieFile) {
         $ch = curl_init($url);

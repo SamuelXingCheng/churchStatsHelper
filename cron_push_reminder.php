@@ -48,22 +48,6 @@ try {
                     "margin" => "md"
                 ]
             ]
-        ],
-        "footer" => [
-            "type" => "box",
-            "layout" => "vertical",
-            "contents" => [
-                [
-                    "type" => "button",
-                    "action" => [
-                        "type" => "message",
-                        "label" => "立即回報人數",
-                        "text" => "兒童排統計"
-                    ],
-                    "style" => "primary",
-                    "color" => "#1DB446"
-                ]
-            ]
         ]
     ];
 

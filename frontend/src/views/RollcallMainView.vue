@@ -397,7 +397,7 @@ async function performSync(isManual = false) {
   try {
     // Step A: 叫後端去爬中央網站 (Update Local DB from Central)
     if (props.userProfile?.sub_district) {
-      await triggerCentralSync(props.userProfile.sub_district)
+      await triggerCentralSync(props.userProfile.sub_district, date.value)
     }
 
     // Step B: 讀取最新的本地資料 (Get Fresh Data)
@@ -452,5 +452,20 @@ function applySmartMerge(freshMembers) {
 function handleManualSync() {
   performSync(true)
 }
+
+// ★ 新增這段：當「可見名單」改變時，自動清理「已勾選ID」
+// 這能防止「我看不到這張卡片，但他卻被勾選了」的幽靈現象
+watch(filteredMembers, (newMembers) => {
+  // 取得目前畫面上所有人的 ID 清單
+  const validIds = newMembers.map(m => m.member_id)
+  
+  // 只保留「還在畫面上」的 ID
+  const oldLength = selectedIds.value.length
+  selectedIds.value = selectedIds.value.filter(id => validIds.includes(id))
+  
+  if (selectedIds.value.length !== oldLength) {
+    console.log(`[自動修正] 已移除 ${oldLength - selectedIds.value.length} 個不在目前檢視範圍的勾選`)
+  }
+})
 
 </script>
