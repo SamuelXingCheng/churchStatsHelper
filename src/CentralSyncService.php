@@ -100,9 +100,13 @@ class CentralSyncService {
                     
                     // ★ 這裡會使用正確計算出來的 $date, $year, $week 寫入資料庫
                     $sql = "INSERT INTO attendance_records 
-                                (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                            ON DUPLICATE KEY UPDATE status=VALUES(status), updated_at=NOW()";
+                        (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at, synced, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, NOW())
+                    ON DUPLICATE KEY UPDATE 
+                        status = VALUES(status), 
+                        synced = 1, 
+                        synced_at = NOW(), 
+                        updated_at = NOW()";
                     $this->conn->prepare($sql)->execute([
                         $memberId, intval($meetingId), $date, $year, $week, $status, $memberDistId, $groupId, $regionId, $m['category'] ?? null
                     ]);

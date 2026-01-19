@@ -705,18 +705,20 @@ class AttendanceService {
         }
 
         if ($syncErrors === 0) {
+            // 只有當所有中央 API 都回傳「處理成功」時，才更新本地資料庫為 1
             $allProcessedIds = array_merge($newMemberIds, array_values($cancelledIds));
             if (!empty($allProcessedIds)) {
                 $placeholders = implode(',', array_fill(0, count($allProcessedIds), '?'));
-                $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW() 
-                              WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
+                $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW(), last_sync_error=NULL 
+                            WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
                 $this->conn->prepare($updateSql)->execute(array_merge($allProcessedIds, [$meetingType, $date]));
             }
-            // 回傳訊息稍微調整，讓前端知道是用什麼模式同步的
-            $scopeMsg = $customGroupId ? "名單ID:$customGroupId" : ($subDistrict ? "小區:$subDistrict" : "無範圍(安全模式)");
-            return ["status" => "success", "message" => "同步完成，範圍：$scopeMsg"];
+            return ["status" => "success", "message" => "同步完成"];
+        } else {
+            // 只要有任何一筆中央系統沒處理成功，synced 就會維持 0
+            // 資料庫中對應的紀錄會維持 synced = 0，由背景程式接手
+            return ["status" => "pending", "message" => "中央系統處理中，已進入自動同步排隊"];
         }
-        return ["status" => "pending", "message" => "部分同步失敗"];
     }
 
     // 輔助函式：發送 curl 請求
@@ -733,7 +735,28 @@ class AttendanceService {
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        return ($httpCode == 200);
+        // 🛡️ 第一道防線：網路層檢查 (必須是 HTTP 200 且有回傳內容)
+        if ($httpCode !== 200 || !$response) {
+            return false; 
+        }
+
+        // 🛡️ 第二道防線：業務邏輯檢查 (解析 JSON 內容)
+        $resData = json_decode($response, true);
+        
+        // 如果中央系統回傳的不是 JSON，或者 JSON 顯示失敗
+        // 假設中央系統成功會回傳 {"status": "success"} 或類似結構
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            // 若中央系統不回傳 JSON，僅能依賴 HTTP 200 (維持現狀)
+            return true; 
+        }
+
+        // ★ 關鍵：檢查中央系統回傳的成功標記 (請根據實際 API 欄位修改)
+        if (isset($resData['status']) && $resData['status'] !== 'success') {
+            error_log("[Central Error] " . ($resData['message'] ?? '未知錯誤'));
+            return false; // 雖然連線成功，但中央系統沒處理成功
+        }
+
+        return true; // 真正意義上的同步成功
     }
 }
 ?>
