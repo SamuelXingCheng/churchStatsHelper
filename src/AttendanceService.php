@@ -722,7 +722,7 @@ class AttendanceService {
     }
 
     // 輔助函式：發送 curl 請求
-    private function sendToCentral($url, $postData, $cookieFile) {
+    public function sendToCentral($url, $postData, $cookieFile) {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postData));
