@@ -329,6 +329,46 @@ class AttendanceService {
         // [修改 1] 接收前端傳來的 date 參數，如果沒傳才用今天
         $dateInput = $_GET['date'] ?? date("Y-m-d");
 
+        // =========================================================
+        // 🛡️ 防禦機制 1：分區獨立快取 (Per-District Caching)
+        // =========================================================
+        // 檔名加入 md5(小區+日期)，確保不會拿到別區或別天的資料
+        // 快取有效期：600 秒 (10分鐘)
+        $cacheKey = md5($district . '_' . $dateInput);
+        $cacheFile = __DIR__ . "/../cache/members_" . $cacheKey . ".json";
+        
+        // 如果快取存在且在 10 分鐘內建立的
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 600)) {
+            // [Hit] 命中快取，直接回傳檔案內容，完全不連線中央
+            // error_log("[Cache] Hit for district: $district");
+            $cachedContent = file_get_contents($cacheFile);
+            return json_decode($cachedContent, true);
+        }
+
+        // =========================================================
+        // 🛡️ 防禦機制 2：全域隨機速率限制 (Global Random Jitter)
+        // =========================================================
+        // 只有快取失效，必須真的連線時才執行這段
+        // 確保所有小區的請求都會排隊，不會瞬間併發
+        $lockFile = __DIR__ . "/../cache/global_last_request.txt";
+        
+        if (file_exists($lockFile)) {
+            $lastTime = (int)file_get_contents($lockFile);
+            $diff = time() - $lastTime;
+            
+            // 設定「隨機」的安全間隔 (2 ~ 4 秒)
+            // 讓防火牆看到請求間隔是不固定的 (模擬真人猶豫時間)
+            $safeGap = rand(2, 4); 
+            
+            if ($diff < $safeGap) {
+                // 如果距離上次請求太近，強制程式暫停
+                // error_log("[RateLimit] Sleeping for " . ($safeGap - $diff) . "s");
+                sleep($safeGap - $diff); 
+            }
+        }
+        // 更新最後請求時間，代表我現在要發送了
+        file_put_contents($lockFile, time());
+
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
             throw new Exception("Cookie 不存在，請先執行登入");
@@ -381,6 +421,13 @@ class AttendanceService {
         if (!$data || !isset($data['members'])) {
             throw new Exception("中央回傳格式錯誤");
         }
+
+        // =========================================================
+        // 💾 成功後存檔 (Update Cache & DB)
+        // =========================================================
+        
+        // 1. 寫入快取檔案 (供接下來 10 分鐘內的請求使用)
+        file_put_contents($cacheFile, json_encode($data));
     
         $sync = new CentralSyncService();
         // [修改 3] 將計算好的 $year 和 $week 傳入，確保寫入資料庫的日期正確

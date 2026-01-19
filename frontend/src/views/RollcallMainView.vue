@@ -268,19 +268,8 @@ watch(() => props.loginSuccess, (newVal) => {
 onMounted(() => {
   // 載入初始資料 (原本的邏輯)
   loadMembers()
-
-
-  // 設定輪詢
-  pollingTimer = setInterval(() => {
-    console.log('[AutoSync] 執行背景同步...')
-    performSync(false) // false 代表背景執行，不轉圈圈
-  }, 120 * 1000) // 2分鐘
 })
 
-// 離開頁面時清除定時器
-onUnmounted(() => {
-  if (pollingTimer) clearInterval(pollingTimer)
-})
 
 // 1. 基礎篩選
 const filteredMembers = computed(() => {
