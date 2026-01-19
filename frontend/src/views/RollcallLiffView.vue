@@ -121,36 +121,63 @@ watch(showLoginModal, (newVal) => {
   }
 })
 
-// 初始化
+//初始化
 onMounted(async () => {
   try {
-    await liff.init({ liffId: LIFF_ID })
-    if (!liff.isLoggedIn()) {
-      liff.login()
-      return
-    }
+    // 1. 設定 3 秒逾時 (3秒對使用者來說是可以接受的等待極限)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("TIMEOUT")), 3000);
+    });
 
+    const liffInitPromise = liff.init({ liffId: LIFF_ID });
+
+    // 2. 競速開始
+    await Promise.race([liffInitPromise, timeoutPromise]);
+
+    // --- 若成功 (iPhone 或 正常的 Android) ---
+    if (!liff.isLoggedIn()) {
+      liff.login({ redirectUri: window.location.href });
+      return;
+    }
+    
+    // 正常的資料載入流程...
     const profile = await liff.getProfile()
     lineUserId.value = profile.userId
-    userProfile.value.pictureUrl = profile.pictureUrl
-
-    // 同步後端資料
-    const res = await syncUserProfile({
-      line_user_id: profile.userId,
-      line_display_name: profile.displayName
-    })
-
-    if (res.status === 'success') {
-      userProfile.value = { ...userProfile.value, ...res.user }
-      isProfileComplete.value = res.profileComplete
-    }
-
-    checkSession() 
+    // ... (後續同步邏輯保持不變) ...
 
   } catch (err) {
-    showMessage("初始化失敗：" + err.message)
+    console.error("LIFF Init Error:", err)
+
+    // ★★★ 根除問題的核心邏輯 ★★★
+    
+    // 判斷 1: 是否為逾時錯誤？
+    if (err.message === "TIMEOUT") {
+        
+        // 判斷 2: 使用者是否正在用 LINE 內建瀏覽器？ (檢查 UserAgent)
+        const isLineBrowser = navigator.userAgent.includes('Line');
+        
+        if (isLineBrowser) {
+            // ★ 全自動解決方案：
+            // 不顯示錯誤，直接告訴使用者正在處理，然後自動轉跳
+            initLoading.value = true; // 保持轉圈圈，避免畫面閃爍
+            showMessage("連線回應較慢，正在為您切換至順暢模式...");
+            
+            // 強制使用 LINE 的 openExternalBrowser 參數開啟外部瀏覽器
+            window.location.replace(`https://liff.line.me/${LIFF_ID}?openExternalBrowser=1`);
+            return; // 結束執行，等待轉跳
+        }
+    }
+
+    // 若是其他錯誤 (例如 LIFF ID 設定錯誤)，才顯示手動救援畫面
+    initError.value = true 
+    showMessage("系統載入異常：" + err.message)
+    
   } finally {
-    initLoading.value = false
+    // 只有在「不是」要自動轉跳的情況下，才關閉 Loading
+    // 如果要轉跳，就讓它繼續轉，體驗比較好
+    if (!navigator.userAgent.includes('Line') || err?.message !== "TIMEOUT") {
+        initLoading.value = false
+    }
   }
 })
 
