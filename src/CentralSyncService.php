@@ -129,25 +129,29 @@ class CentralSyncService {
                 foreach ($meetingIds as $idx => $meetingId) {
                     $status = $m["attend{$idx}"] ?? null;
                     
+                    // ★★★ 新增這行：強制轉為整數 (0 或 1) ★★★
+                    $forceModeInt = (int)$forceMode; 
+
                     if ($forceMode) {
                         $newStatusExpr = "VALUES(status)";
                     } else {
                         $newStatusExpr = "IF(attendance_records.synced = 0, attendance_records.status, VALUES(status))";
                     }
 
+                    // ★★★ 下面 SQL 中的 $forceMode 都要改成 $forceModeInt ★★★
                     $sql = "INSERT INTO attendance_records 
                                 (member_id, item_id, date, year, week, status, district_id, group_id, region_id, category, created_at, synced, synced_at, updated_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, NOW(), NOW())
                             ON DUPLICATE KEY UPDATE 
                                 status = $newStatusExpr,
-                                synced = IF($forceMode = 0 AND attendance_records.synced = 0, 0, 1),
+                                synced = IF($forceModeInt = 0 AND attendance_records.synced = 0, 0, 1),
                                 updated_at = IF(
                                     (attendance_records.status != VALUES(status)) OR (attendance_records.synced = 0),
                                     NOW(),
                                     attendance_records.updated_at
                                 ),
                                 synced_at = IF(
-                                    ($forceMode = 1) OR (attendance_records.synced = 0),
+                                    ($forceModeInt = 1) OR (attendance_records.synced = 0),
                                     NOW(),
                                     attendance_records.synced_at
                                 )";
