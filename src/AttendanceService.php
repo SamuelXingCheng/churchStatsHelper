@@ -333,12 +333,12 @@ class AttendanceService {
         // 🛡️ 防禦機制 1：分區獨立快取 (Per-District Caching)
         // =========================================================
         // 檔名加入 md5(小區+日期)，確保不會拿到別區或別天的資料
-        // 快取有效期：600 秒 (10分鐘)
+        // 快取有效期：60 秒 (10分鐘)
         $cacheKey = md5($district . '_' . $dateInput);
         $cacheFile = __DIR__ . "/../cache/members_" . $cacheKey . ".json";
         
         // 如果快取存在且在 10 分鐘內建立的
-        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 600)) {
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 60)) {
             // [Hit] 命中快取，直接回傳檔案內容，完全不連線中央
             // error_log("[Cache] Hit for district: $district");
             $cachedContent = file_get_contents($cacheFile);
@@ -386,13 +386,30 @@ class AttendanceService {
             throw new Exception("找不到對應的大區 ID 設定");
         }
     
+        // ★★★ 新增：組裝所有要同步的聚會 ID ★★★
+        // 這些常數在 config.php 中定義
+        $allMeetings = [
+            Lordsday,       // 主日 (37)
+            Pray,           // 禱告 (40)
+            smallGroup,     // 小排 (39)
+            home_MEETING,   // 家聚會受訪 (38)
+            go_home_MEETING,// 家聚會出訪 (2312)
+            Gospel,         // 福音出訪 (1473)
+            Revival,        // 晨興 (2026)
+            ChildrenGroup,  // 兒童排 (768)
+            LifeStudy       // 生命讀經 (2483)
+        ];
+        // 用逗號連接，例如 "37,40,39,..."
+        $rollCallListStr = implode(',', $allMeetings);
+    
         // 網址參數使用計算出來的 $year 和 $week
         $url = CENTRAL_BASE_URL . "/list_members.php"
              . "?start=0&limit=2000&year=$year&week=$week" 
              . "&sex=&member_status=&status=&role="        
              . "&search_col=member_name&search=" . urlencode($search)
              . "&churches%5B%5D=" . urlencode($configValue) 
-             . "&filter_mode=churchStructureTab&roll_call_list="; 
+             . "&filter_mode=churchStructureTab"
+             . "&roll_call_list=" . $rollCallListStr; // <--- 這裡！把 ID 列表帶進去
     
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
