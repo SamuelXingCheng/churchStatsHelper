@@ -685,46 +685,37 @@ class AttendanceService {
         }
 
         // =========================================================
-        // Step C: 中央同步 (邏輯維持不變)
+        // Step C (極速版): 改為非同步處理
         // =========================================================
-        $cookieFile = $this->cookiePath . "/central_cookie.tmp";
-        if (!file_exists($cookieFile)) {
-            return ["status" => "success", "message" => "已存本地，但中央未連線"];
-        }
+        
+        // 1. 觸發背景程式 (Fire and Forget)
+        // 讓 sync_runner.php 在後台慢慢處理上傳，不卡住使用者的畫面
+        $this->triggerBackgroundSync();
 
-        $url = CENTRAL_BASE_URL . "/edit_member_activity.php";
-        $syncErrors = 0;
+        // 2. 直接回傳成功 (前端 0.1 秒內就會收到回應)
+        return [
+            "status" => "success", 
+            "message" => "點名已儲存 (系統將在背景自動同步)"
+        ];
+    }
 
-        if (!empty($addedIds)) {
-            $postData = [
-                'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 1, 
-                'member_ids' => array_values($addedIds)
-            ];
-            if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
-        }
-
-        if (!empty($cancelledIds)) {
-            $postData = [
-                'meeting' => $meetingType, 'year' => $year, 'week' => $week, 'attend' => 0, 
-                'member_ids' => array_values($cancelledIds) 
-            ];
-            if (!$this->sendToCentral($url, $postData, $cookieFile)) $syncErrors++;
-        }
-
-        if ($syncErrors === 0) {
-            // 只有當所有中央 API 都回傳「處理成功」時，才更新本地資料庫為 1
-            $allProcessedIds = array_merge($newMemberIds, array_values($cancelledIds));
-            if (!empty($allProcessedIds)) {
-                $placeholders = implode(',', array_fill(0, count($allProcessedIds), '?'));
-                $updateSql = "UPDATE attendance_records SET synced=1, synced_at=NOW(), last_sync_error=NULL 
-                            WHERE member_id IN ($placeholders) AND item_id = ? AND date = ?";
-                $this->conn->prepare($updateSql)->execute(array_merge($allProcessedIds, [$meetingType, $date]));
+    // ★ 新增：觸發背景同步的輔助函式
+    private function triggerBackgroundSync() {
+        // 取得 sync_runner.php 的絕對路徑
+        $runnerPath = __DIR__ . '/../sync_runner.php'; 
+        
+        if (file_exists($runnerPath)) {
+            // 判斷作業系統，使用不同的指令丟入背景執行
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                // Windows: 使用 start /B
+                pclose(popen("start /B php " . escapeshellarg($runnerPath), "r"));
+            } else {
+                // Linux/Mac: 使用 > /dev/null 2>&1 &
+                // 這是最標準的背景執行方式，不會等待程式跑完
+                exec("php " . escapeshellarg($runnerPath) . " > /dev/null 2>&1 &");
             }
-            return ["status" => "success", "message" => "同步完成"];
         } else {
-            // 只要有任何一筆中央系統沒處理成功，synced 就會維持 0
-            // 資料庫中對應的紀錄會維持 synced = 0，由背景程式接手
-            return ["status" => "pending", "message" => "中央系統處理中，已進入自動同步排隊"];
+            error_log("[AttendanceService] 找不到背景程式: $runnerPath");
         }
     }
 
