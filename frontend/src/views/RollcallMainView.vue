@@ -77,23 +77,60 @@
 
       <div class="flex items-center space-x-3">
         
-        <button 
-          @click="handleManualSync" 
-          :disabled="isSyncing"
-          class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all active:scale-95 border"
-          :class="isSyncing 
-            ? 'bg-gray-800 text-gray-400 border-gray-700 cursor-wait' 
-            : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/20'"
-        >
-          <svg v-if="isSyncing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          <span>{{ isSyncing ? '同步中' : '同步' }}</span>
-        </button>
+        <div class="relative" :class="{ 'z-50': showGuide }">
+        
+          <button 
+            @click="handleManualSync" 
+            :disabled="isSyncing"
+            class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all active:scale-95 border relative"
+            :class="[
+              isSyncing 
+                ? 'bg-gray-800 text-gray-400 border-gray-700 cursor-wait' 
+                : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/20',
+              // 如果顯示引導，加入發光與金色邊框效果，讓它在暗色背景中突顯出來
+              showGuide ? 'ring-2 ring-accent-gold ring-offset-2 ring-offset-navy-base bg-navy-base border-accent-gold text-accent-gold' : ''
+            ]"
+          >
+            <svg v-if="isSyncing" class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>{{ isSyncing ? '同步中' : '同步' }}</span>
+          </button>
+
+          <div v-if="showGuide" 
+             class="absolute top-full right-0 mt-5 w-80 bg-accent-gold text-navy-base p-6 rounded-2xl shadow-2xl animate-bounce-slight origin-top-right z-50 pointer-events-auto border-2 border-white/20">
+          
+          <div class="absolute -top-3 right-6 w-6 h-6 bg-accent-gold rotate-45 border-t-2 border-l-2 border-white/20"></div>
+          
+          <div class="relative z-10">
+            <h3 class="font-black text-2xl mb-4 flex items-center tracking-wide leading-tight">
+              {{ guideMessage.title }}
+            </h3>
+            
+            <p class="text-lg font-bold leading-relaxed opacity-95 text-justify tracking-wide">
+              {{ guideMessage.text }}
+            </p>
+            
+            <div class="flex justify-end items-center space-x-4 mt-6 pt-4 border-t border-navy-base/15">
+              <button @click.stop="closeGuide" 
+                      class="text-sm text-navy-base/70 hover:text-navy-base underline decoration-dotted transition font-bold px-2 py-1">
+                跳過教學
+              </button>
+
+              <button v-if="guideMessage.type === 'list'" 
+                      @click.stop="closeGuide" 
+                      class="text-base font-black bg-navy-base/10 px-5 py-2.5 rounded-xl hover:bg-navy-base/20 transition shadow-sm">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+
+        </div>
 
         <div class="text-[10px] text-blue-300 bg-[#0f172a] px-3 py-1 rounded-full border border-blue-500/20">
           已選 <span class="font-bold text-white text-xs ml-0.5">{{ selectedIds.length }}</span> 人
@@ -185,7 +222,13 @@
       </div>
     </div>
 
+    <div v-if="showGuide" 
+         class="fixed inset-0 bg-black/70 backdrop-blur-[2px] z-40 transition-opacity duration-300 cursor-pointer"
+         @click="closeGuide">
+    </div>
+
   </div>
+  
 </template>
 
 <script setup>
@@ -213,6 +256,40 @@ const useSundayBenchmark = ref(false)
 const isSyncing = ref(false)
 const lastSyncTime = ref('')
 let pollingTimer = null // 用來存計時器 ID
+
+// const hasSeenGuide = localStorage.getItem('hasSeenGuide')
+const hasSeenGuide = null // 強制假裝沒看過
+const showGuide = ref(!hasSeenGuide)
+
+// ★★★ 新增：計算引導文字內容 ★★★
+const guideMessage = computed(() => {
+  if (filteredMembers.value.length === 0) {
+    return {
+      title: '歡迎使用！',
+      text: '這是您的第一步：請點擊「同步」按鈕，從正式系統拉取最新的成員名單。',
+      type: 'empty'
+    }
+  } else {
+    return {
+      title: '保持最新',
+      text: '若發現燈號未更新，或想確認點名最新狀態，請隨時點擊此處進行雙向同步。',
+      type: 'list'
+    }
+  }
+})
+
+// ★★★ 新增：關閉引導函式 ★★★
+function closeGuide() {
+  showGuide.value = false
+  // 寫入紀錄，下次就不會再跳出來了
+  localStorage.setItem('hasSeenGuide', 'true')
+}
+
+// ★★★ 修改：手動同步函式 (加入關閉引導) ★★★
+function handleManualSync() {
+  closeGuide() // 使用者點擊了同步，代表他學會了，直接關閉引導
+  performSync(true)
+}
 
 async function loadMembers() {
   loadingMembers.value = true
@@ -245,6 +322,8 @@ async function loadMembers() {
   }
 }
 
+
+
 function toggleBenchmark() {
   useSundayBenchmark.value = !useSundayBenchmark.value
   loadMembers() 
@@ -260,8 +339,8 @@ watch([meetingType, date], () => {
 // 監聽登入狀態：一旦偵測到登入成功 (false -> true)，自動執行同步抓資料
 watch(() => props.loginSuccess, (newVal) => {
   if (newVal === true) {
-    console.log("偵測到登入成功，執行初次自動同步...");
-    performSync(true); // 呼叫同步函式 (帶 true 顯示 loading 讓使用者知道正在跑)
+    // console.log("偵測到登入成功，執行初次自動同步...");
+    // performSync(true); // 呼叫同步函式 (帶 true 顯示 loading 讓使用者知道正在跑)
   }
 })
 
@@ -437,11 +516,6 @@ function applySmartMerge(freshMembers) {
   }
 }
 
-// 3. 手動同步入口
-function handleManualSync() {
-  performSync(true)
-}
-
 // ★ 新增這段：當「可見名單」改變時，自動清理「已勾選ID」
 // 這能防止「我看不到這張卡片，但他卻被勾選了」的幽靈現象
 watch(filteredMembers, (newMembers) => {
@@ -458,3 +532,15 @@ watch(filteredMembers, (newMembers) => {
 })
 
 </script>
+
+<style scoped>
+/* 原有的樣式... */
+
+@keyframes bounce-slight {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+.animate-bounce-slight {
+  animation: bounce-slight 2.5s infinite ease-in-out;
+}
+</style>
