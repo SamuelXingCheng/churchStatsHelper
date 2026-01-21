@@ -32,7 +32,13 @@
     </div>
 
     <div v-if="member.status === 1" class="absolute top-1 right-1">
-      <div class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-lg shadow-green-500/50"></div>
+      <div v-if="member.synced === 1" 
+           class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-lg shadow-green-500/50">
+      </div>
+      
+      <div v-else 
+           class="w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-lg shadow-yellow-400/50 animate-pulse">
+      </div>
     </div>
 
   </div>
