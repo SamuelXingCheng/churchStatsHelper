@@ -469,13 +469,15 @@ class AttendanceService {
         $statsItemId = ($benchmarkMode === 'sunday') ? 37 : $itemId;
 
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
-                       r.status AS current_status, 
-                       r.item_id AS record_item,
-                       r_last.status AS last_week_status,
-                       (
-                           SELECT COUNT(*) 
-                           FROM attendance_records ar 
-                           WHERE ar.member_id = m.member_id 
+                   r.status AS current_status, 
+                   r.item_id AS record_item,
+                   r.synced,                /* <--- 新增這一行 */
+                   r.last_sync_error,       /* <--- 新增這一行 (選填，除錯用) */
+                   r_last.status AS last_week_status,
+                   (
+                       SELECT COUNT(*) 
+                       FROM attendance_records ar 
+                       WHERE ar.member_id = m.member_id
                            AND ar.item_id = ?   
                            AND ar.date BETWEEN ? AND ? 
                            AND ar.status = 1
@@ -511,6 +513,11 @@ class AttendanceService {
                 "small_group_name" => $rName,
                 "item_id"          => intval($row["record_item"] ?? $itemId),
                 "status"           => is_null($row["current_status"]) ? null : intval($row["current_status"]),
+                
+                // ★ 新增這行：處理同步狀態 (預設為 0)
+                "synced"           => intval($row["synced"] ?? 0),
+                "last_sync_error"  => $row["last_sync_error"] ?? null,
+
                 "last_week_status" => is_null($row["last_week_status"]) ? 0 : intval($row["last_week_status"]),
                 "monthly_count"    => intval($row["monthly_count"])
             ];
