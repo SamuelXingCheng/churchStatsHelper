@@ -325,22 +325,21 @@ class AttendanceService {
     private function centralMembers() {
         $district = $_GET['district'] ?? ''; 
         $search   = $_GET['search']   ?? '';
-
-        // [修改 1] 接收前端傳來的 date 參數，如果沒傳才用今天
         $dateInput = $_GET['date'] ?? date("Y-m-d");
+
+        // [優化 1] 接收前端傳來的特定聚會類型 (如果有傳的話)
+        $targetMeetingType = $_GET['meeting_type'] ?? ''; 
 
         // =========================================================
         // 🛡️ 防禦機制 1：分區獨立快取 (Per-District Caching)
         // =========================================================
-        // 檔名加入 md5(小區+日期)，確保不會拿到別區或別天的資料
-        // 快取有效期：60 秒 (10分鐘)
-        $cacheKey = md5($district . '_' . $dateInput);
+        // [優化 2] 檔名加入 md5(小區 + 日期 + 聚會類型)
+        // 這是關鍵：如果不加 meeting_type，切換聚會時會讀到舊的快取，導致資料錯誤
+        $cacheKey = md5($district . '_' . $dateInput . '_' . $targetMeetingType);
         $cacheFile = __DIR__ . "/../cache/members_" . $cacheKey . ".json";
         
-        // 如果快取存在且在 10 分鐘內建立的
+        // 如果快取存在且在 60 秒內建立的 (避免頻繁請求)
         if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 60)) {
-            // [Hit] 命中快取，直接回傳檔案內容，完全不連線中央
-            // error_log("[Cache] Hit for district: $district");
             $cachedContent = file_get_contents($cacheFile);
             return json_decode($cachedContent, true);
         }
@@ -348,33 +347,24 @@ class AttendanceService {
         // =========================================================
         // 🛡️ 防禦機制 2：全域隨機速率限制 (Global Random Jitter)
         // =========================================================
-        // 只有快取失效，必須真的連線時才執行這段
-        // 確保所有小區的請求都會排隊，不會瞬間併發
         $lockFile = __DIR__ . "/../cache/global_last_request.txt";
         
         if (file_exists($lockFile)) {
             $lastTime = (int)file_get_contents($lockFile);
             $diff = time() - $lastTime;
-            
-            // 設定「隨機」的安全間隔 (2 ~ 4 秒)
-            // 讓防火牆看到請求間隔是不固定的 (模擬真人猶豫時間)
             $safeGap = rand(2, 4); 
             
             if ($diff < $safeGap) {
-                // 如果距離上次請求太近，強制程式暫停
-                // error_log("[RateLimit] Sleeping for " . ($safeGap - $diff) . "s");
                 sleep($safeGap - $diff); 
             }
         }
-        // 更新最後請求時間，代表我現在要發送了
         file_put_contents($lockFile, time());
 
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
         if (!file_exists($cookieFile)) {
-            throw new Exception("Cookie 不存在，請先執行登入");
+            throw new Exception("401 Unauthorized: Cookie 不存在，請先執行登入");
         }
     
-        // [修改 2] 根據該日期計算 Year / Week (使用 ISO-8601 標準 'o' 與 'W')
         $ts = strtotime($dateInput);
         $year = date("o", $ts); 
         $week = date("W", $ts);
@@ -386,30 +376,28 @@ class AttendanceService {
             throw new Exception("找不到對應的大區 ID 設定");
         }
     
-        // ★★★ 新增：組裝所有要同步的聚會 ID ★★★
-        // 這些常數在 config.php 中定義
-        $allMeetings = [
-            Lordsday,       // 主日 (37)
-            Pray,           // 禱告 (40)
-            smallGroup,     // 小排 (39)
-            home_MEETING,   // 家聚會受訪 (38)
-            go_home_MEETING,// 家聚會出訪 (2312)
-            Gospel,         // 福音出訪 (1473)
-            Revival,        // 晨興 (2026)
-            ChildrenGroup,  // 兒童排 (768)
-            LifeStudy       // 生命讀經 (2483)
-        ];
-        // 用逗號連接，例如 "37,40,39,..."
-        $rollCallListStr = implode(',', $allMeetings);
+        // =========================================================
+        // [優化 3] 決定要抓哪些名單 (瘦身模式)
+        // =========================================================
+        if (!empty($targetMeetingType)) {
+            // A. 精準模式：只抓目前正在看的這個聚會 (速度快、不易逾時)
+            $rollCallListStr = $targetMeetingType;
+        } else {
+            // B. 全量模式：沒指定時才抓全部 (相容舊版)
+            $allMeetings = [
+                Lordsday, Pray, smallGroup, home_MEETING, 
+                go_home_MEETING, Gospel, Revival, ChildrenGroup, LifeStudy
+            ];
+            $rollCallListStr = implode(',', $allMeetings);
+        }
     
-        // 網址參數使用計算出來的 $year 和 $week
         $url = CENTRAL_BASE_URL . "/list_members.php"
              . "?start=0&limit=2000&year=$year&week=$week" 
              . "&sex=&member_status=&status=&role="        
              . "&search_col=member_name&search=" . urlencode($search)
              . "&churches%5B%5D=" . urlencode($configValue) 
              . "&filter_mode=churchStructureTab"
-             . "&roll_call_list=" . $rollCallListStr; // <--- 這裡！把 ID 列表帶進去
+             . "&roll_call_list=" . $rollCallListStr; 
     
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
@@ -418,37 +406,95 @@ class AttendanceService {
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
         curl_setopt($ch, CURLOPT_REFERER, CENTRAL_BASE_URL . '/');
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        
+        // [優化 4] 增加 Timeout 設定 (避免卡死)
+        curl_setopt($ch, CURLOPT_TIMEOUT, 120); 
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);
     
         $result = curl_exec($ch);
+        
+        // --- 錯誤處理開始 ---
+        if ($result === false) {
+            $curlError = curl_error($ch);
+            $curlErrNo = curl_errno($ch);
+            curl_close($ch);
+            error_log("[AttendanceService] cURL Failed. ErrNo: $curlErrNo, Error: $curlError");
+            throw new Exception("連線中央系統失敗 (cURL Error): $curlError");
+        }
+
         $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        if ($httpCode !== 200) {
+            if ($httpCode === 401 || $httpCode === 403) {
+                 @unlink($cookieFile);
+                 throw new Exception("401 Unauthorized: 連線金鑰已失效，請重新登入。");
+            }
+            throw new Exception("中央系統連線異常 (HTTP Code: $httpCode)");
+        }
+
+        if (empty($result)) {
+            throw new Exception("中央系統回傳空白內容 (Empty Response)，請稍後再試。");
+        }
     
         if (strpos($effectiveUrl, 'login.php') !== false) {
              @unlink($cookieFile);
-             throw new Exception("Session 失效，請重新登入。");
+             throw new Exception("401 Unauthorized: Session Redirect，請重新登入。");
         }
+        // --- 錯誤處理結束 ---
     
         $data = json_decode($result, true);
+        
+        // --- JSON 解析與智慧判斷 ---
         if (json_last_error() !== JSON_ERROR_NONE) {
-            $preview = substr($result, 0, 500); 
-            error_log("[AttendanceService] Central API JSON Decode Error: " . $preview);
-            throw new Exception("中央系統回傳格式錯誤 (非 JSON)，可能是系統維護或權限問題。");
+            
+            $preview = mb_substr(strip_tags($result), 0, 100); 
+            error_log("[AttendanceService] JSON Decode Error. Preview: " . $preview);
+
+            // 檢查是否包含登入關鍵字
+            if (stripos($result, 'login') !== false || 
+                stripos($result, 'password') !== false || 
+                stripos($result, 'securimage') !== false ||
+                stripos($result, '登入') !== false) {
+                
+                @unlink($cookieFile); 
+                throw new Exception("401 Unauthorized: 連線金鑰已過期，請重新登入。");
+            }
+
+            throw new Exception("中央系統回傳非 JSON 格式 (可能系統維護中)。內容預覽：" . $preview);
         }
     
         if (!$data || !isset($data['members'])) {
-            throw new Exception("中央回傳格式錯誤");
+            throw new Exception("中央回傳格式缺損 (缺少 members 欄位)");
         }
 
         // =========================================================
-        // 💾 成功後存檔 (Update Cache & DB)
+        // 💾 成功後存檔
         // =========================================================
         
-        // 1. 寫入快取檔案 (供接下來 10 分鐘內的請求使用)
         file_put_contents($cacheFile, json_encode($data));
     
         $sync = new CentralSyncService();
-        // [修改 3] 將計算好的 $year 和 $week 傳入，確保寫入資料庫的日期正確
-        $sync->syncMembersAndAttendance($district, $data, $year, $week);
+        
+        // 傳入參數說明：
+        // 1. $district
+        // 2. $data
+        // 3. $year
+        // 4. $week
+        // 5. $forceMode = false (預設)
+        // 6. $skipSeconds = 0 (手動同步不略過，確保時間更新)
+        // 7. $limitToItem = $targetMeetingType (★ 限制只更新這個聚會)
+        
+        $sync->syncMembersAndAttendance(
+            $district, 
+            $data, 
+            $year, 
+            $week, 
+            false, 
+            0,     // 這裡設為 0，確保手動同步時一定會寫入並更新時間
+            $targetMeetingType // 把我們剛剛接到的 meeting_type 傳進去
+        );
     
         return $data;
     }
@@ -488,8 +534,10 @@ class AttendanceService {
         $sql = "SELECT m.member_id, m.name, m.gender, m.group_id, m.region_id, m.category,
                    r.status AS current_status, 
                    r.item_id AS record_item,
-                   r.synced,                /* <--- 新增這一行 */
-                   r.last_sync_error,       /* <--- 新增這一行 (選填，除錯用) */
+                   r.synced,
+                   r.synced_at,             /* <--- ★ 修改：從 updated_at 改為 synced_at */
+                   r.updated_at,
+                   r.last_sync_error,
                    r_last.status AS last_week_status,
                    (
                        SELECT COUNT(*) 
@@ -533,6 +581,8 @@ class AttendanceService {
                 
                 // ★ 新增這行：處理同步狀態 (預設為 0)
                 "synced"           => intval($row["synced"] ?? 0),
+                "synced_at"        => $row["synced_at"],
+                "updated_at"       => $row["updated_at"],
                 "last_sync_error"  => $row["last_sync_error"] ?? null,
 
                 "last_week_status" => is_null($row["last_week_status"]) ? 0 : intval($row["last_week_status"]),

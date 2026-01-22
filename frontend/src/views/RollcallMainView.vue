@@ -75,6 +75,28 @@
         <span class="text-xs text-gray-400 font-medium group-hover:text-gray-200 transition">全選本頁</span>
       </label>
 
+      <div class="flex justify-between items-center mb-3 px-2">
+        <label class="flex items-center space-x-2 cursor-pointer select-none group">
+          </label>
+
+        <div class="flex items-center space-x-3">
+          
+          <div v-if="lastSyncTime" class="flex items-baseline space-x-2 mr-4"> 
+          
+          <span class="text-xs text-gray-400 font-bold tracking-wider">最後更新時間</span>
+          
+          <span class="text-base text-blue-300 font-black font-mono leading-none shadow-blue-500/20 drop-shadow-sm">
+            {{ lastSyncTime }}
+          </span>
+          
+        </div>
+
+          <div class="relative" :class="{ 'z-50': showGuide }">
+              </div>
+
+        </div>
+      </div>
+
       <div class="flex items-center space-x-3">
         
         <div class="relative" :class="{ 'z-50': showGuide }">
@@ -298,6 +320,9 @@ async function loadMembers() {
     const res = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     members.value = res || []
     
+    // ★★★ 新增這行：計算並更新最後同步時間 ★★★
+    updateLastSyncTimeFromData(members.value)
+
     // 計算目前小區看得到的人 (避免勾選到篩選外的人)
     const visibleIds = filteredMembers.value.map(m => m.member_id)
 
@@ -457,37 +482,79 @@ function getMeetingName(type) {
 
 // 1. 執行同步 (包含 API 呼叫 + 智能合併)
 async function performSync(isManual = false) {
-  if (isSyncing.value) return
+  // 1. 防止重複點擊
+  if (isSyncing.value) {
+     console.log("正在同步中，略過此次點擊");
+     return;
+  }
   
-  // 如果是手動按的，顯示 Loading 轉圈圈；背景執行則不顯示
   if (isManual) isSyncing.value = true
   
+  // 安全計時器：30秒後強制解鎖 (避免按鈕卡死)
+  const safetyTimer = setTimeout(() => {
+    if (isSyncing.value) {
+      isSyncing.value = false;
+      if (isManual) alert("⚠️ 同步請求逾時 (超過 30 秒)，但點名資料已安全儲存在本地，請放心。");
+    }
+  }, 30000);
+
   try {
-    // Step A: 叫後端去爬中央網站 (Update Local DB from Central)
+    console.log("1. 開始同步流程...");
+
+    // Step A: 呼叫後端爬蟲 (瘦身版)
     if (props.userProfile?.sub_district) {
-      await triggerCentralSync(props.userProfile.sub_district, date.value)
+      
+      console.log(`2. 呼叫中央同步 API (鎖定聚會: ${meetingType.value})...`);
+      
+      // ★★★ 關鍵修改：傳入 meetingType.value ★★★
+      // 這樣後端只會去抓「主日」或「禱告」單一項目的資料，速度會快 5~10 倍
+      await triggerCentralSync(
+          props.userProfile.sub_district, 
+          date.value, 
+          meetingType.value 
+      )
     }
 
-    // Step B: 讀取最新的本地資料 (Get Fresh Data)
+    // Step B: 讀取最新資料
+    console.log("3. 重新讀取本地資料...");
     const benchmarkMode = useSundayBenchmark.value ? 'sunday' : 'self'
+    
+    // 這裡原本就有加 _t 防快取，維持原狀即可
     const freshMembers = await fetchMembers(meetingType.value, date.value, benchmarkMode)
     
-    // Step C: 智能合併 (Smart Merge Logic)
-    // 這裡不直接覆蓋 members.value，而是要比對 selectedIds
+    // Step C: 更新畫面
+    console.log("4. 更新前端畫面...");
     applySmartMerge(freshMembers)
-
-    // 更新顯示清單 (這會觸發畫面重繪)
     members.value = freshMembers
-    
-    // 更新時間顯示
-    const now = new Date()
-    lastSyncTime.value = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`
+    updateLastSyncTimeFromData(members.value)
+
+    // 明確告訴使用者「成功了」
+    if (isManual) {
+      setTimeout(() => alert("✅ 同步完成！資料已更新。"), 100);
+    }
 
   } catch (e) {
-    console.error("同步失敗", e)
-    if (isManual) alert("同步失敗，請檢查網路")
+    console.error("❌ 同步發生錯誤:", e)
+    
+    if (isManual) {
+      let errorMsg = "未知錯誤";
+      if (typeof e === 'string') errorMsg = e;
+      else if (e instanceof Error) errorMsg = e.message;
+      else errorMsg = JSON.stringify(e);
+
+      // 針對 401 (Cookie過期) 的特殊處理
+      if (errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('Login')) {
+        alert("⚠️ 連線金鑰已過期，系統將自動開啟登入視窗。")
+        emit('openLogin')
+      } else {
+        // 顯示具體錯誤 (例如 Timeout 或 DNS 錯誤)
+        alert("❌ 同步失敗，原因：" + errorMsg)
+      }
+    }
   } finally {
+    clearTimeout(safetyTimer);
     isSyncing.value = false
+    console.log("5. 同步流程結束，解除鎖定。");
   }
 }
 
@@ -530,6 +597,36 @@ watch(filteredMembers, (newMembers) => {
     console.log(`[自動修正] 已移除 ${oldLength - selectedIds.value.length} 個不在目前檢視範圍的勾選`)
   }
 })
+
+function updateLastSyncTimeFromData(list) {
+  if (!list || list.length === 0) {
+    lastSyncTime.value = ''
+    return
+  }
+
+  let maxTime = 0
+  list.forEach(m => {
+    // 1. 取得最後手動修改時間 (Local Update)
+    // replace 是為了讓 Safari 看得懂日期格式
+    const tUpdate = m.updated_at ? new Date(m.updated_at.replace(/-/g, '/')).getTime() : 0
+    
+    // 2. 取得最後同步時間 (Central Sync)
+    const tSync = m.synced_at ? new Date(m.synced_at.replace(/-/g, '/')).getTime() : 0
+    
+    // 3. ★ 關鍵：取兩者中「較大 (較新)」的那個時間
+    const currentMax = Math.max(tUpdate, tSync)
+    
+    if (currentMax > maxTime) maxTime = currentMax
+  })
+
+  if (maxTime > 0) {
+    const d = new Date(maxTime)
+    // 顯示格式：17:22:06
+    lastSyncTime.value = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+  } else {
+    lastSyncTime.value = ''
+  }
+}
 
 </script>
 

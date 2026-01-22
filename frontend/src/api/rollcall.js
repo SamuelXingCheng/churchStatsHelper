@@ -10,11 +10,32 @@ export async function fetchMembers(meetingType, date, benchmarkMode = 'self') {
   return json.members
 }
 
-export async function triggerCentralSync(district, date) {
-  // 如果沒有 date，後端會預設用今天，但最好還是傳過去
-  const dateParam = date ? `&date=${date}` : '';
-  const url = `${API_BASE}?path=central-members&district=${district}${dateParam}`;
-  const res = await fetch(url);
+export async function triggerCentralSync(subDistrict, date, meetingType) {
+  // 建立參數物件
+  const params = {
+    path: 'central-members', // ★★★ 關鍵修改：把路徑變成參數傳進去
+    district: subDistrict,
+    date: date
+  };
+
+  // 如果有傳入 meetingType (瘦身模式)，就加進去
+  if (meetingType) {
+    params.meeting_type = meetingType;
+  }
+
+  const query = new URLSearchParams(params).toString();
+  
+  // ★★★ 修改 fetch 網址：移除路徑中的 /central-members，只留 API_BASE
+  // 假設 API_BASE 是 "https://xxx.com/api"
+  // 最終請求會變成 "https://xxx.com/api?path=central-members&district=..."
+  // 這樣後端一定讀得到 path
+  const res = await fetch(`${API_BASE}?${query}`);
+  
+  if (!res.ok) {
+     const errData = await res.json().catch(() => ({}));
+     throw new Error(errData.message || `Server Error: ${res.status}`);
+  }
+  
   return await res.json();
 }
 
