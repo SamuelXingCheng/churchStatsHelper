@@ -428,28 +428,41 @@ async function performSync(isManual = false, mode = 'current') {
      return;
   }
   
+  // ★ 新增旗標：紀錄是否已經判定為逾時
+  let hasTimedOut = false;
+
   if (isManual) {
     isSyncing.value = true
-    syncMode.value = mode 
-    closeGuide()
+    syncMode.value = mode
+    // closeGuide() // 如果有引入 closeGuide，這裡可以呼叫
   }
   
   const timeoutLimit = mode === 'all' ? 60000 : 30000;
   
   const safetyTimer = setTimeout(() => {
+    // 時間到，如果還在同步中...
     if (isSyncing.value) {
-      isSyncing.value = false;
+      hasTimedOut = true; // ★ 1. 標記為已逾時
+      isSyncing.value = false; // 解鎖按鈕
       if (isManual) alert(`⚠️ 同步請求逾時 (超過 ${timeoutLimit/1000} 秒)，但點名資料已安全儲存在本地。`);
     }
   }, timeoutLimit);
 
   try {
     console.log(`1. 開始同步流程 (模式: ${mode})...`);
+
     if (props.userProfile?.sub_district) {
       const targetType = (mode === 'all') ? null : meetingType.value;
       console.log(`2. 呼叫 API: Target=${targetType || 'ALL'}`);
-      await triggerCentralSync(props.userProfile.sub_district, date.value, targetType)
+      
+      await triggerCentralSync(
+          props.userProfile.sub_district, 
+          date.value, 
+          targetType 
+      )
     }
+
+    // --- 如果在等待 API 的過程中逾時了，這裡會繼續執行，但我們要攔截最後的 Alert ---
 
     console.log("3. 重新讀取本地資料...");
     const benchmarkMode = useSundayBenchmark.value ? 'sunday' : 'self'
@@ -460,15 +473,19 @@ async function performSync(isManual = false, mode = 'current') {
     members.value = freshMembers
     updateLastSyncTimeFromData(members.value)
 
-    if (isManual) {
+    // ★ 2. 關鍵修正：只有在「沒有逾時」的情況下，才顯示成功訊息
+    if (isManual && !hasTimedOut) {
       setTimeout(() => {
         const msg = mode === 'all' ? "✅ 所有聚會資料已同步完成！" : "✅ 該聚會資料已更新。";
         alert(msg);
       }, 100);
     }
+
   } catch (e) {
     console.error("❌ 同步發生錯誤:", e)
-    if (isManual) {
+    
+    // ★ 3. 同樣道理：如果已經報過逾時，就不要再報錯誤了
+    if (isManual && !hasTimedOut) {
       let errorMsg = "未知錯誤";
       if (typeof e === 'string') errorMsg = e;
       else if (e instanceof Error) errorMsg = e.message;
@@ -483,8 +500,12 @@ async function performSync(isManual = false, mode = 'current') {
     }
   } finally {
     clearTimeout(safetyTimer);
-    isSyncing.value = false
-    console.log("5. 同步流程結束，解除鎖定。");
+    
+    // 只有在還沒被 Timeout 解鎖的情況下，才去解鎖
+    if (!hasTimedOut) {
+        isSyncing.value = false
+    }
+    console.log("5. 同步流程結束。");
   }
 }
 
