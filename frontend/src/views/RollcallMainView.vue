@@ -84,6 +84,7 @@
 
           <div class="relative" :class="{ 'z-50': showGuide }">
             <button 
+              v-if="loginSuccess"
               @click="handleManualSync" 
               :disabled="isSyncing"
               class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all active:scale-95 border relative"
