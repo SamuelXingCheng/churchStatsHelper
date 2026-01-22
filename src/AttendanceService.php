@@ -301,8 +301,13 @@ class AttendanceService {
 
     private function centralSession() {
         $cookieFile = $this->cookiePath . "/central_cookie.tmp";
-        if (!file_exists($cookieFile)) return ["loggedIn" => false, "message" => "未登入"];
+        
+        // 1. 如果 Cookie 檔案根本不存在，直接判斷未登入
+        if (!file_exists($cookieFile)) {
+            return ["loggedIn" => false, "message" => "未登入 (Cookie 缺失)"];
+        }
 
+        // 2. 嘗試連線到中央首頁
         $ch = curl_init(CENTRAL_BASE_URL . "/index.php");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
@@ -310,15 +315,33 @@ class AttendanceService {
         curl_setopt($ch, CURLOPT_USERAGENT, $this->userAgent);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         
+        // ★★★ 修正重點：加大逾時寬容度 (配合慢速伺服器) ★★★
+        curl_setopt($ch, CURLOPT_TIMEOUT, 120);        // 允許執行 120 秒
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30);  // 允許連線耗時 30 秒
+        
         $response = curl_exec($ch);
         $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE); // 取得 HTTP 狀態碼
         curl_close($ch);
 
-        if (strpos($effectiveUrl, 'login.php') !== false || strpos($response, "帳號/Account") !== false) {
-            @unlink($cookieFile);
+        // 3. 判斷是否連線失敗 (Timeout 或 DNS 錯誤)
+        if ($response === false || $httpCode === 0) {
+            // 雖然連線失敗，但為了不讓使用者恐慌，
+            // 如果我們手上有 Cookie，可以暫時回傳 "unknown" 或視為 "可能還登入著"
+            // 但標準做法是回傳錯誤，讓前端重試
+            return ["loggedIn" => false, "message" => "連線逾時，請稍後再試"];
+        }
+
+        // 4. 判斷是否被踢回登入頁
+        if (strpos($effectiveUrl, 'login.php') !== false || 
+            strpos($response, "帳號/Account") !== false || 
+            strpos($response, "登入") !== false) {
+            
+            @unlink($cookieFile); // 確定失效了，刪除 Cookie
             return ["loggedIn" => false, "message" => "Session 已過期，請重新登入"];
         }
 
+        // 5. 通過所有檢查
         return ["loggedIn" => true, "message" => "已登入"];
     }
 

@@ -210,8 +210,13 @@ async function handleSyncAll() {
     try {
       // 呼叫子元件暴露出來的 performSync 函式 (同步全部模式)
       await mainViewRef.value.performSync(true, 'all');
+      
+      // ★★★ 新增這行：既然同步成功，代表連線絕對是正常的，直接轉綠燈 ★★★
+      loginSuccess.value = true; 
+
     } catch (e) {
       console.error(e);
+      // 如果同步失敗是因為 401 (權限不足)，那燈號會自動變紅 (在 mainView 的錯誤處理裡)
     } finally {
       syncing.value = false;
     }
